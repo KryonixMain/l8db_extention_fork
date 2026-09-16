@@ -396,14 +396,21 @@ export class PermissionManager {
     "runtime:native",
     "editor:read",
     "editor:write",
+    "media:capture",
   ];
   validate(manifest: ExtensionManifest, grants: Permission[]) {
-    for (const grant of grants)
-      if (!this.supported.includes(grant) || !manifest.permissions?.includes(grant))
+    for (const grant of grants) {
+      if (!this.supported.includes(grant))
         throw new ExtensionError(
           "PermissionDeniedError",
-          `Unsupported or undeclared permission: ${grant}`,
+          `${manifest.id}: this l8db build does not support the permission ${grant}`,
         );
+      if (!manifest.permissions?.includes(grant))
+        throw new ExtensionError(
+          "PermissionDeniedError",
+          `${manifest.id}: the manifest does not declare ${grant}; it declares ${manifest.permissions?.join(", ") || "nothing"}`,
+        );
+    }
   }
   require(extension: ExtensionDescriptor, permission: Permission) {
     this.validate(extension.archive.manifest, extension.grants);

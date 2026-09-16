@@ -29,6 +29,8 @@ pub struct Event {
     pub name: String,
     #[serde(default)]
     pub payload: Value,
+    #[serde(default)]
+    pub bytes: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]

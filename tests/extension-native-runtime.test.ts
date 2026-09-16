@@ -1,8 +1,5 @@
 import { expect, test } from "bun:test";
-import {
-  validateArchive,
-  validateManifest,
-} from "../packages/extension-api/src/manifest";
+import { validateArchive, validateManifest } from "../packages/extension-api/src/manifest";
 import {
   applyChanges,
   diffChange,
@@ -31,9 +28,9 @@ test("javascript manifests keep validating unchanged", () => {
   const result = validateManifest(js);
   expect(result.main).toBe("extension.js");
   expect(result.runtime).toBeUndefined();
-  expect(validateManifest({ ...base, main: "a.js", engines: { l8db: ">=0.5.0" } }).engines.api).toBe(
-    "^1.0.0",
-  );
+  expect(
+    validateManifest({ ...base, main: "a.js", engines: { l8db: ">=0.5.0" } }).engines.api,
+  ).toBe("^1.0.0");
 });
 
 test("native manifests normalise their executables", () => {
@@ -70,9 +67,9 @@ test("unknown runtimes are rejected", () => {
 });
 
 test("archives require an entry point only for javascript extensions", () => {
-  expect(() =>
-    validateArchive({ format: 1, manifest: js, files: {} }),
-  ).toThrow(/Missing entry point/);
+  expect(() => validateArchive({ format: 1, manifest: js, files: {} })).toThrow(
+    /Missing entry point/,
+  );
   expect(validateArchive({ format: 1, manifest: native, files: {} }).manifest.runtime).toBe(
     "native",
   );

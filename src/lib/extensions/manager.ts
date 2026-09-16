@@ -15,6 +15,7 @@ import type {
   FetchOptions,
   InputBoxOptions,
   Json,
+  MediaRequest,
   PanelSnapshot,
   Permission,
   ProcessOptions,
@@ -27,7 +28,9 @@ import type {
 } from "./contracts";
 import { ExtensionError } from "./contracts";
 import { editorBridge } from "./editor-bridge";
+import { FsGrants } from "./fs-grants";
 import { ExtensionLoader } from "./loader";
+import { mediaBridge } from "./media-bridge";
 import {
   CommandRegistry,
   ConfigurationRegistry,
@@ -71,7 +74,7 @@ export class ExtensionManager {
   private contributions = new Map<string, Disposable[]>();
   private activating = new Map<string, Promise<void>>();
   private mutation: Promise<unknown> = Promise.resolve();
-  private fsGrants = new Map<string, Set<string>>();
+  private fsGrants = new FsGrants();
   constructor(
     private readonly storage: ExtensionStorage,
     private readonly runtime: ExtensionRuntime,
@@ -203,7 +206,7 @@ export class ExtensionManager {
       await this.storage.remove(id);
       this.release(id);
       this.registry.remove(id);
-      this.fsGrants.delete(id);
+      this.fsGrants.clear(id);
       this.changed();
     });
   }
@@ -391,6 +394,7 @@ export class ExtensionManager {
       }
     }
     this.resources.delete(id);
+    mediaBridge.stopAll(id);
     this.commands.clear(id);
     this.views.clear(id);
     this.statusBar.clear(id);
@@ -431,16 +435,14 @@ export class ExtensionManager {
     this.contributions.delete(id);
   }
   private allowFs(id: string, path: string) {
-    let grants = this.fsGrants.get(id);
-    if (!grants) {
-      grants = new Set();
-      this.fsGrants.set(id, grants);
-    }
-    grants.add(path);
+    this.fsGrants.allowFile(id, path);
   }
   private requireFs(id: string, path: string) {
-    if (!this.fsGrants.get(id)?.has(path))
-      throw new ExtensionError("PermissionDeniedError", "Path requires a file dialog grant");
+    if (!this.fsGrants.allows(id, path))
+      throw new ExtensionError(
+        "PermissionDeniedError",
+        "Path requires a file or directory dialog grant",
+      );
   }
   private async rpc(
     extension: ExtensionDescriptor,
@@ -510,6 +512,24 @@ export class ExtensionManager {
         "editorContentChanged",
         "editorSelectionChanged",
       ];
+      if (event === "mediaFrame" || event === "mediaTrackEnded") {
+        this.permissions.require(extension, "media:capture");
+        const key = `event:${event}`;
+        if (!resources.has(key))
+          resources.set(
+            key,
+            event === "mediaFrame"
+              ? mediaBridge.onFrame(({ owner, frame, data }) => {
+                if (owner === id) this.runtime.event(id, event, frame as unknown as Json, data);})
+              : mediaBridge.onTrackEnded(({ owner, trackId }) => {
+                if (owner === id) this.runtime.event(id, event, { trackId });}),
+          );
+        return;
+      }
+      if (event === "workspaceChanged") {
+        this.permissions.require(extension, "filesystem");
+        return;
+      }
       if (databaseEvents.includes(event)) this.permissions.require(extension, "database:read");
       else if (editorEvents.includes(event)) this.permissions.require(extension, "editor:read");
       else throw new ExtensionError("ProtocolError", "Unknown event");
@@ -555,6 +575,46 @@ export class ExtensionManager {
         level: level === "warn" ? "warning" : (level as "info" | "error"),
         actions,
       })) as Json;
+    }
+    if (method.startsWith("media.")) {
+      this.permissions.require(extension, "media:capture");
+      const capabilities = extension.archive.manifest.capabilities?.media;
+      if (method === "media.list") return mediaBridge.list(id) as unknown as Json;
+      if (method === "media.stop") {
+        mediaBridge.stop(id, text(0, 256));
+        return;
+      }
+      if (method === "media.setMuted") {
+        const trackId = text(0, 256);
+        if (typeof args[1] !== "boolean") throw new ExtensionError("ProtocolError", "Invalid muted flag");
+        mediaBridge.setMuted(id, trackId, args[1]);
+        return;
+      }
+      if (method === "media.start" || method === "media.startScreenShare") {
+        const raw = (args[0] ?? null) as unknown as MediaRequest | null;
+        const request: MediaRequest =
+          raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+        const number = (value: unknown, min: number, max: number, label: string) => {
+          if (value === undefined) return undefined;
+          if (typeof value !== "number" || !Number.isFinite(value) || value < min || value > max) throw new ExtensionError("ProtocolError", `Invalid ${label}`);
+          return value;
+        };
+        const checked: MediaRequest = {
+          video: request.video === undefined ? undefined : request.video === true,
+          audio: request.audio === undefined ? undefined : request.audio === true,
+          width: number(request.width, 16, 7680, "width"),
+          height: number(request.height, 16, 4320, "height"),
+          frameRate: number(request.frameRate, 1, 60, "frame rate"),
+          bitrate: number(request.bitrate, 8000, 20_000_000, "bitrate"),
+        };
+        return (await mediaBridge.start(
+          id,
+          capabilities,
+          method === "media.startScreenShare" ? "screen" : "camera",
+          checked,
+        )) as unknown as Json;
+      }
+      throw new ExtensionError("PermissionDeniedError", `API method unavailable: ${method}`);
     }
     if (method.startsWith("editor.")) {
       const write = method === "editor.applyEdits" || method === "editor.setSelection";
@@ -747,6 +807,41 @@ export class ExtensionManager {
           : await this.core.showSaveDialog(hint);
       if (path) this.allowFs(id, path);
       return path;
+    }
+    if (method === "workspace.showOpenDirectoryDialog") {
+      this.permissions.require(extension, "filesystem");
+      const path = await this.core.showOpenDirectoryDialog(optionalText(0, 256));
+      if (path) this.fsGrants.allowRoot(id, path);
+      return path;
+    }
+    if (method === "workspace.grantedRoots") {
+      this.permissions.require(extension, "filesystem");
+      return this.fsGrants.rootsFor(id) as unknown as Json;
+    }
+    if (method === "workspace.listDirectory") {
+      this.permissions.require(extension, "filesystem");
+      const path = text(0, 4096);
+      this.requireFs(id, path);
+      const raw = (args[1] ?? null) as unknown as { includeHidden?: boolean } | null;
+      const includeHidden = raw && typeof raw === "object" && !Array.isArray(raw) ? raw.includeHidden === true : false;
+      return (await this.core.listDirectory(path, includeHidden)) as unknown as Json;
+    }
+    if (method === "workspace.watch" || method === "workspace.unwatch") {
+      this.permissions.require(extension, "filesystem");
+      const path = text(0, 4096);
+      this.requireFs(id, path);
+      const key = `watch:${path}`;
+      if (method === "workspace.unwatch") {
+        resources.get(key)?.dispose();
+        resources.delete(key);
+        return;
+      }
+      if (resources.has(key)) return;
+      const stop = await this.core.watchPath(path, (paths) => {
+        if (this.resources.get(id)?.get(key)) this.runtime.event(id, "workspaceChanged", { root: path, paths } as unknown as Json);
+      });
+      resources.set(key, { dispose: stop });
+      return;
     }
     if (method === "workspace.readFile") {
       this.permissions.require(extension, "filesystem");
