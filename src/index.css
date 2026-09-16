@@ -459,6 +459,19 @@
   border-radius: 2px;
 }
 
+.l8db-peer-selection {
+  background-color: color-mix(in oklch, var(--primary) 22%, transparent);
+  border-radius: 2px;
+}
+
+.l8db-peer-caret::before {
+  content: "";
+  position: absolute;
+  width: 2px;
+  height: 100%;
+  background-color: var(--primary);
+}
+
 .l8db-bookmark-glyph {
   background-color: color-mix(in oklch, var(--primary) 70%, transparent);
   width: 11px !important;

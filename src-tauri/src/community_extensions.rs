@@ -33,7 +33,7 @@ fn safe_id(id: &str) -> bool {
                     .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
         })
 }
-fn safe_path(path: &str) -> bool {
+pub(crate) fn safe_path(path: &str) -> bool {
     !path.is_empty()
         && path.len() <= 240
         && path
@@ -69,20 +69,29 @@ fn validate_archive(archive: &Value) -> Result<String, String> {
     if archive["format"] != 1 || !safe_id(id) {
         return Err("Invalid extension archive".into());
     }
-    let main = archive["manifest"]["main"]
-        .as_str()
-        .ok_or("Missing entry point")?
-        .trim_start_matches("./");
+    let native = archive["manifest"]["runtime"] == "native";
     let files = archive["files"].as_object().ok_or("Missing files")?;
     if files.len() > 256
-        || !safe_path(main)
-        || !main.ends_with(".js")
-        || !files.contains_key(main)
         || files
             .iter()
             .any(|(path, value)| !safe_path(path) || !value.is_string())
     {
-        return Err("Invalid extension file paths or entry point".into());
+        return Err("Invalid extension file paths".into());
+    }
+    if native {
+        let executables = archive["manifest"]["executables"].as_object().ok_or("Native extensions must declare executables")?;
+        if executables.is_empty()
+            || executables.iter().any(|(_, value)| {
+                value.as_str().is_none_or(|path| !safe_path(path.trim_start_matches("./")))
+            })
+        {
+            return Err("Invalid native extension executables".into());
+        }
+    } else {
+        let main = archive["manifest"]["main"].as_str().ok_or("Missing entry point")?.trim_start_matches("./");
+        if !safe_path(main) || !main.ends_with(".js") || !files.contains_key(main) {
+            return Err("Invalid extension entry point".into());
+        }
     }
     if serde_json::to_vec(archive)
         .map_err(|e| e.to_string())?
@@ -147,18 +156,21 @@ fn read_installed(root: &Path, id: &str) -> Result<Installed, String> {
 fn import_directory(path: &Path) -> Result<Value, String> {
     let root = path.canonicalize().map_err(|e| e.to_string())?;
     let mut manifest = read_json(&root.join("l8db-extension.json"), 65536)?;
-    let main = manifest["main"]
-        .as_str()
-        .ok_or("Missing main")?
-        .strip_prefix("./")
-        .unwrap_or(manifest["main"].as_str().unwrap())
-        .to_owned();
-    if !safe_path(&main) {
-        return Err("Invalid main path".into());
+    let mut paths = Vec::new();
+    if manifest["runtime"] == "native" {
+        manifest
+            .as_object_mut()
+            .ok_or("Invalid manifest")?
+            .remove("main");
+    } else {
+        let main = manifest["main"].as_str().ok_or("Missing main")?.strip_prefix("./").unwrap_or(manifest["main"].as_str().unwrap()).to_owned();
+        if !safe_path(&main) {
+            return Err("Invalid main path".into());
+        }
+        manifest["main"] = json!(main);
+        paths.push(main);
     }
-    manifest["main"] = json!(main);
     let mut files = serde_json::Map::new();
-    let mut paths = vec![main];
     if root.join("assets").exists() {
         collect_assets(&root, Path::new("assets"), &mut paths, &mut 0)?;
     }

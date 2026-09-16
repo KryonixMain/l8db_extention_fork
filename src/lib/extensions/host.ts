@@ -21,8 +21,12 @@ import type {
   QueryResult,
 } from "./contracts";
 import { ExtensionError } from "./contracts";
+import { editorBridge } from "./editor-bridge";
+import { connectEditorTabs } from "./editor-tabs-source";
 import { ExtensionManager } from "./manager";
 import { useExtensionPrompts } from "./prompts";
+import { ProcessRuntime } from "./process-runtime";
+import { RuntimeRouter } from "./runtime-router";
 import { SandboxRuntime } from "./sandbox-runtime";
 import { TauriExtensionStorage } from "./tauri-storage";
 
@@ -167,7 +171,7 @@ export function createExtensionHost() {
   };
   const manager = new ExtensionManager(
     new TauriExtensionStorage(),
-    new SandboxRuntime(),
+    new RuntimeRouter(new SandboxRuntime(), new ProcessRuntime()),
     core,
     version,
   );
@@ -197,9 +201,17 @@ export function createExtensionHost() {
       };
       const connections = useConnectionsStore.subscribe(update);
       const selections = useDbSelectionStore.subscribe(update);
+      const editorTabs = connectEditorTabs();
+      const editorActive = editorBridge.onActiveChanged((event) => manager.events.emit("editorActiveChanged", event));
+      const editorContent = editorBridge.onContentChanged((event) => manager.events.emit("editorContentChanged", event));
+      const editorSelection = editorBridge.onSelectionChanged((event) => manager.events.emit("editorSelectionChanged", event));
       dispose = () => {
         connections();
         selections();
+        editorTabs();
+        editorActive.dispose();
+        editorContent.dispose();
+        editorSelection.dispose();
       };
       await manager.trigger("onStartup");
       update();

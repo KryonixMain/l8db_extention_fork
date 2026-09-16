@@ -1,5 +1,6 @@
 mod community_extensions;
 mod db;
+mod extension_host;
 mod extension_process;
 mod mcp;
 
@@ -17,6 +18,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(community_extensions::ExtensionStoreLock::default())
+        .manage(extension_host::NativeHostState::default())
         .manage(db::pool::create_pool_state())
         .manage(db::transaction::create_transaction_state())
         .manage(db::ssh::create_ssh_state())
@@ -33,6 +35,10 @@ pub fn run() {
             mcp::clients::mcp_clients,
             mcp::clients::mcp_register,
             mcp::clients::mcp_server_command,
+            extension_host::extension_host_spawn,
+            extension_host::extension_host_send,
+            extension_host::extension_host_kill,
+            extension_host::extension_host_session,
             db::commands::list_providers,
             db::commands::driver_status,
             db::commands::install_driver,

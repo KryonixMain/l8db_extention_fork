@@ -1,6 +1,6 @@
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 export interface Disposable { dispose(): void }
-export type Permission = "database:read" | "database:write" | "network" | "filesystem:extension-storage" | "filesystem" | "clipboard:read" | "clipboard:write" | "process:execute";
+export type Permission = "database:read" | "database:write" | "network" | "filesystem:extension-storage" | "filesystem" | "clipboard:read" | "clipboard:write" | "process:execute" | "runtime:native" | "editor:read" | "editor:write";
 export interface ConfigurationProperty {
   type: "boolean" | "string" | "number";
   default: boolean | string | number;
@@ -40,14 +40,18 @@ export interface ExtensionCapabilities {
   network?: NetworkCapabilities;
   process?: ProcessCapabilities;
 }
+export type ExtensionPlatform = "windows-x86_64" | "windows-aarch64" | "macos-x86_64" | "macos-aarch64" | "linux-x86_64" | "linux-aarch64";
+export type ExtensionRuntimeKind = "javascript" | "native";
 export interface ExtensionManifest {
   id: string;
   name: string;
   version: string;
   description?: string;
   publisher: string;
-  engines: { l8db: string; api: "^1.0.0" | "^1.1.0" };
-  main: string;
+  engines: { l8db: string; api: "^1.0.0" | "^1.1.0" | "^1.2.0" };
+  runtime?: ExtensionRuntimeKind;
+  main?: string;
+  executables?: Partial<Record<ExtensionPlatform, string>>;
   activationEvents: ("onStartup" | "onDatabaseOpen" | `onCommand:${string}` | `onView:${string}`)[];
   permissions?: Permission[];
   dependencies?: Record<string, string>;
@@ -74,11 +78,45 @@ export interface QueryResult {
   rowsAffected: number | null;
   executionTimeMs: number;
 }
+export interface EditorDocumentInfo {
+  documentId: string;
+  title: string;
+  languageId: string;
+  version: number;
+}
+export interface EditorDocument extends EditorDocumentInfo {
+  text: string;
+}
+export interface EditorChange {
+  start: number;
+  end: number;
+  text: string;
+}
+export interface EditorContentChange {
+  documentId: string;
+  changes: EditorChange[];
+  version: number;
+}
+export interface EditorSelection {
+  documentId: string;
+  anchor: number;
+  active: number;
+}
+export interface PeerCursor {
+  peerId: string;
+  label: string;
+  color: string;
+  anchor: number;
+  active: number;
+}
 export interface ExtensionEvents {
   databaseOpened: DatabaseInfo;
   databaseClosed: DatabaseInfo;
   activeDatabaseChanged: DatabaseInfo | null;
   configurationChanged: { keys: string[] };
+  editorActiveChanged: EditorDocumentInfo | null;
+  editorContentChanged: EditorContentChange;
+  editorSelectionChanged: EditorSelection;
 }
 export interface TreeItem {
   id: string;
@@ -180,7 +218,7 @@ export interface ProcessResult {
   stderr: string;
 }
 export interface L8dbApi {
-  readonly version: "1.1.0";
+  readonly version: "1.2.0";
   commands: {
     registerCommand(id: string, handler: (payload?: Json) => Json | void | Promise<Json | void>): Disposable;
     executeCommand(id: string, payload?: Json): Promise<Json | void>;
@@ -245,6 +283,19 @@ export interface L8dbApi {
     close(panelId: string): Promise<void>;
     postMessage(panelId: string, message: Json): Promise<void>;
     onDidReceiveMessage(panelId: string, listener: (message: Json) => void | Promise<void>): Disposable;
+  };
+  editor: {
+    getActive(): Promise<EditorDocument | null>;
+    listDocuments(): Promise<EditorDocumentInfo[]>;
+    getDocument(documentId: string): Promise<EditorDocument>;
+    applyEdits(documentId: string, edits: EditorChange[], baseVersion?: number): Promise<number>;
+    getSelection(documentId: string): Promise<EditorSelection | null>;
+    setSelection(documentId: string, anchor: number, active: number): Promise<void>;
+    reveal(documentId: string, offset?: number): Promise<void>;
+    setPeerCursors(documentId: string, cursors: PeerCursor[]): Promise<void>;
+    onDidChangeActive(listener: (event: EditorDocumentInfo | null) => void | Promise<void>): Disposable;
+    onDidChangeContent(listener: (event: EditorContentChange) => void | Promise<void>): Disposable;
+    onDidChangeSelection(listener: (event: EditorSelection) => void | Promise<void>): Disposable;
   };
   assets: { readText(path: string): Promise<string> };
   storage: { get(key: string): Promise<Json>; set(key: string, value: Json): Promise<void> };

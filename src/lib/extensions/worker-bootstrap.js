@@ -120,7 +120,7 @@
       if (message.method === "load") {
         context = { ...message.context, subscriptions: [] };
         api = {
-          version: "1.1.0",
+          version: "1.2.0",
           commands: {
             registerCommand: (id, handler) => {
               if (handlers.has(id)) throw new Error(`DuplicateCommandError: ${id}`);
@@ -215,6 +215,22 @@
             close: (panelId) => rpc("panels.close", panelId),
             postMessage: (panelId, msg) => rpc("panels.postMessage", panelId, msg ?? null),
             onDidReceiveMessage: (panelId, listener) => subscribeWebview(panelId, listener),
+          },
+          editor: {
+            getActive: () => rpc("editor.getActive"),
+            listDocuments: () => rpc("editor.listDocuments"),
+            getDocument: (documentId) => rpc("editor.getDocument", documentId),
+            applyEdits: (documentId, edits, baseVersion) =>
+              rpc("editor.applyEdits", documentId, edits, baseVersion ?? null),
+            getSelection: (documentId) => rpc("editor.getSelection", documentId),
+            setSelection: (documentId, anchor, active) =>
+              rpc("editor.setSelection", documentId, anchor, active),
+            reveal: (documentId, offset) => rpc("editor.reveal", documentId, offset ?? 0),
+            setPeerCursors: (documentId, cursors) =>
+              rpc("editor.setPeerCursors", documentId, cursors),
+            onDidChangeActive: (listener) => subscribe("editorActiveChanged", listener),
+            onDidChangeContent: (listener) => subscribe("editorContentChanged", listener),
+            onDidChangeSelection: (listener) => subscribe("editorSelectionChanged", listener),
           },
           assets: { readText: (path) => rpc("assets.readText", path) },
           storage: {

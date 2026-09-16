@@ -393,6 +393,9 @@ export class PermissionManager {
     "clipboard:read",
     "clipboard:write",
     "process:execute",
+    "runtime:native",
+    "editor:read",
+    "editor:write",
   ];
   validate(manifest: ExtensionManifest, grants: Permission[]) {
     for (const grant of grants)
