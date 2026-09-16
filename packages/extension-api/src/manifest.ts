@@ -7,7 +7,7 @@ export class ExtensionError extends Error {
     this.name = code;
   }
 }
-export const permissions: Permission[] = ["database:read", "database:write", "network", "filesystem:extension-storage", "filesystem", "clipboard:read", "clipboard:write", "process:execute", "runtime:native", "editor:read", "editor:write"];
+export const permissions: Permission[] = ["database:read", "database:write", "network", "filesystem:extension-storage", "filesystem", "clipboard:read", "clipboard:write", "process:execute", "runtime:native", "editor:read", "editor:write", "media:capture"];
 export const extensionIdPattern = /^[a-z0-9][a-z0-9-]*\.[a-z0-9][a-z0-9-]*$/;
 export const apiVersions = ["^1.0.0", "^1.1.0", "^1.2.0"];
 export const platforms = ["windows-x86_64", "windows-aarch64", "macos-x86_64", "macos-aarch64", "linux-x86_64", "linux-aarch64"];
@@ -77,7 +77,14 @@ export function validateManifest(value: unknown): ExtensionManifest {
   }
   if (value.capabilities !== undefined) {
     if (!object(value.capabilities)) fail("Invalid capabilities");
-    if (Object.keys(value.capabilities).some(k => !["network", "process"].includes(k))) fail("Unsupported capability");
+    if (Object.keys(value.capabilities).some(k => !["network", "process", "media"].includes(k))) fail("Unsupported capability");
+    const media = (value.capabilities as Record<string, unknown>).media;
+    if (media !== undefined) {
+      if (!object(media) || Object.keys(media).some(k => !["camera", "microphone", "screen"].includes(k))) fail("Invalid media capability");
+      if (!Object.values(media).every(v => typeof v === "boolean")) fail("Invalid media capability");
+      if (!Object.values(media).some(v => v === true)) fail("Media capability must enable at least one source");
+      if (!Array.isArray(value.permissions) || !value.permissions.includes("media:capture")) fail("The media capability requires the media:capture permission");
+    }
     const network = (value.capabilities as Record<string, unknown>).network;
     if (network !== undefined && (!object(network) || !Array.isArray(network.hosts) || network.hosts.length > 50 || !network.hosts.every(h => typeof h === "string" && h.length > 0 && h.length <= 253 && hostPattern.test(h)))) fail("Invalid network capability");
     const proc = (value.capabilities as Record<string, unknown>).process;

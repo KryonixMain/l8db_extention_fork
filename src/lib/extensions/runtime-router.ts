@@ -2,7 +2,10 @@ import type { ExtensionDescriptor, ExtensionRuntime, Json, RpcHandler } from "./
 
 export class RuntimeRouter implements ExtensionRuntime {
   private owners = new Map<string, ExtensionRuntime>();
-  constructor(private readonly javascript: ExtensionRuntime, private readonly native: ExtensionRuntime) {}
+  constructor(
+    private readonly javascript: ExtensionRuntime,
+    private readonly native: ExtensionRuntime,
+  ) {}
 
   private runtimeFor(extension: ExtensionDescriptor) {
     return extension.archive.manifest.runtime === "native" ? this.native : this.javascript;
@@ -45,8 +48,8 @@ export class RuntimeRouter implements ExtensionRuntime {
     if (!runtime) return Promise.reject(new Error(`Extension runtime unavailable: ${id}`));
     return runtime.execute(id, command, payload);
   }
-  
-  event(id: string, name: string, payload: Json) {
-    this.owner(id)?.event(id, name, payload);
+
+  event(id: string, name: string, payload: Json, binary?: Uint8Array) {
+    this.owner(id)?.event(id, name, payload, binary);
   }
 }

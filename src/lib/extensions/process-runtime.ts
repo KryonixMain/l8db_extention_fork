@@ -3,6 +3,19 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { ExtensionDescriptor, ExtensionRuntime, Json, RpcHandler } from "./contracts";
 import { ExtensionError } from "./contracts";
 
+const BASE64_CHUNK = 0x8000;
+
+export function hostChannel(id: string): string {
+  return `extension-host://${id.replaceAll(".", "_")}`;
+}
+
+export function encodeBase64(data: Uint8Array): string {
+  let binary = "";
+  for (let index = 0; index < data.length; index += BASE64_CHUNK)
+    binary += String.fromCharCode(...data.subarray(index, index + BASE64_CHUNK));
+  return btoa(binary);
+}
+
 interface HostEvent {
   session: number;
   message: Record<string, Json>;
@@ -44,7 +57,7 @@ export class ProcessRuntime implements ExtensionRuntime {
     this.hosts.set(id, host);
     let count = 0;
     let windowStart = Date.now();
-    const unlisten = await listen<HostEvent>(`extension-host://${id}`, ({ payload }) => {
+    const unlisten = await listen<HostEvent>(hostChannel(id), ({ payload }) => {
       if (this.hosts.get(id) !== host || host.stopped) return;
       if (payload.session !== host.session) return;
       if (Date.now() - windowStart > 1000) {
@@ -80,7 +93,8 @@ export class ProcessRuntime implements ExtensionRuntime {
         typeof message.method === "string"
       ) {
         void rpc(message.method, (message.args ?? []) as Json[]).then(
-          (value) => this.post(id, host, { type: "rpc-result", id: message.id, value: value ?? null }),
+          (value) =>
+            this.post(id, host, { type: "rpc-result", id: message.id, value: value ?? null }),
           (error) =>
             this.post(id, host, { type: "rpc-result", id: message.id, error: String(error) }),
         );
@@ -107,15 +121,23 @@ export class ProcessRuntime implements ExtensionRuntime {
       throw error;
     }
   }
-  
-  private post(id: string, host: NativeHost, message: Record<string, unknown>) {
+
+  private post(id: string, host: NativeHost, message: Record<string, unknown>, data?: Uint8Array) {
     if (this.hosts.get(id) !== host || host.stopped) return;
-    void invoke("extension_host_send", { id, message: JSON.stringify(message) }).catch((error) => {
+    void invoke("extension_host_send", {
+      id,
+      message: JSON.stringify(message),
+      data: data ? encodeBase64(data) : null,
+    }).catch((error) => {
       if (this.hosts.get(id) === host && !host.stopped) host.failure(new Error(String(error)));
     });
   }
 
-  private request(id: string, method: string, data: Record<string, unknown> = {}): Promise<Json | void> {
+  private request(
+    id: string,
+    method: string,
+    data: Record<string, unknown> = {},
+  ): Promise<Json | void> {
     const host = this.hosts.get(id);
     if (!host || host.stopped) return Promise.reject(new Error(`Extension runtime unavailable: ${id}`));
     const requestId = ++host.sequence;
@@ -143,9 +165,14 @@ export class ProcessRuntime implements ExtensionRuntime {
     return this.request(id, "execute", { command, payload: payload ?? null });
   }
 
-  event(id: string, name: string, payload: Json) {
+  event(id: string, name: string, payload: Json, binary?: Uint8Array) {
     const host = this.hosts.get(id);
-    if (host) this.post(id, host, { type: "event", name, payload });
+    if (!host) return;
+    if (!binary) {
+      this.post(id, host, { type: "event", name, payload });
+      return;
+    }
+    this.post(id, host, { type: "event", name, payload, bytes: binary.byteLength }, binary);
   }
 
   async unload(id: string) {

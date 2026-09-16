@@ -18,6 +18,7 @@ src-tauri/WixTools/
 src-tauri/gen/
 packages/extension-sdk-rs/target
 examples/hello-rust-extension/target
+examples/hello-rust-extension/bin
 
 # Tauri updater signing keys - never commit
 *.key
