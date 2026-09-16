@@ -2,8 +2,9 @@ mod api;
 mod protocol;
 
 pub use api::{
-    Api, DatabaseInfo, EditorChange, EditorContentChange, EditorDocument, EditorDocumentInfo,
-    EditorSelection, PeerCursor, QueryResult, StatusBarUpdate, TreeItem,
+    Api, DatabaseInfo, DirectoryEntry, DirectoryListing, EditorChange, EditorContentChange, EditorDocument, EditorDocumentInfo,
+    EditorSelection, MediaFrame, MediaRequest, MediaTrackInfo, PeerCursor, QueryResult,
+    StatusBarUpdate, TreeItem, WorkspaceChange,
 };
 pub use async_trait::async_trait;
 pub use protocol::Context;
@@ -14,7 +15,7 @@ use protocol::{Incoming, Outgoing, MAX_LINE};
 use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{mpsc, Mutex};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,7 +60,7 @@ pub trait Extension: Send + 'static {
     async fn execute(&mut self, command: &str, _payload: Value, _api: &Api) -> Result<Value> {
         Err(Error(format!("CommandNotFoundError: {command}")))
     }
-    async fn event(&mut self, _name: &str, _payload: Value, _api: &Api) {}
+    async fn event(&mut self, _name: &str, _payload: Value, _binary: Vec<u8>, _api: &Api) {}
 }
 
 pub fn run<E: Extension>(extension: E) -> Result<()> {
@@ -115,10 +116,21 @@ async fn serve<E: Extension>(extension: E) -> Result<()> {
                 client.settle(result.id, settled);
             }
             Incoming::Event(event) => {
+                let mut binary = Vec::new();
+                if let Some(length) = event.bytes {
+                    if length > MAX_LINE {
+                        let _ = api.0.send(Outgoing::Crash {error: "Host attachment exceeds the limit".into()}).await;
+                        break;
+                    }
+                    binary.resize(length, 0);
+                    if reader.read_exact(&mut binary).await.is_err() {
+                        break;
+                    }
+                }
                 let extension = extension.clone();
                 let api = api.clone();
                 tokio::spawn(async move {
-                    extension.lock().await.event(&event.name, event.payload, &api).await;
+                    extension.lock().await.event(&event.name, event.payload, binary, &api).await;
                 });
             }
             Incoming::Request(request) => {

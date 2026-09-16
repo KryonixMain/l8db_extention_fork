@@ -6,9 +6,11 @@ import { validateArchive, validateManifest, safePath } from "@l8db/extension-api
 export async function buildExtension(directory: string) {
   const root = await realpath(resolve(directory));
   const manifest = validateManifest(JSON.parse(await readFile(join(root, "l8db-extension.json"), "utf8")));
+  if (manifest.runtime === "native") return manifest;
   const result = await Bun.build({ entrypoints: [join(root, "src/extension.ts")], target: "browser", format: "cjs", minify: false, sourcemap: "none", packages: "bundle" });
   if (!result.success) throw new Error(result.logs.map(String).join("\n"));
   if (result.outputs.length !== 1) throw new Error("Extensions must produce a single bundled entry point");
+  if (manifest.main === undefined) throw new Error("JavaScript extensions must declare main");
   const destination = join(root, manifest.main);
   await mkdir(resolve(destination, ".."), { recursive: true });
   const actualParent = await realpath(resolve(destination, ".."));
@@ -34,7 +36,7 @@ export async function packageExtension(directory: string) {
     if (!metadata.isFile() || size > 8 * 1024 * 1024 || Object.keys(files).length >= 256) throw new Error("Package limit exceeded");
     files[name] = new TextDecoder("utf-8", { fatal: true }).decode(await readFile(path));
   };
-  await add(join(root, manifest.main));
+  if (manifest.main !== undefined) await add(join(root, manifest.main));
   try { await lstat(join(root, "assets")); await add(join(root, "assets")) } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error }
   return validateArchive({ format: 1, manifest, files });
 }
@@ -42,7 +44,7 @@ async function main() {
   const [command, directory = ".", destination] = process.argv.slice(2);
   if (command === "build") {
     const manifest = await buildExtension(directory);
-    console.log(`Built ${manifest.id}@${manifest.version}`);
+    console.log(manifest.runtime === "native" ? `${manifest.id}@${manifest.version} is native; build its executables with cargo` : `Built ${manifest.id}@${manifest.version}`);
   } else if (command === "validate") {
     const archive = await packageExtension(directory);
     console.log(`Valid: ${archive.manifest.id}@${archive.manifest.version}`);

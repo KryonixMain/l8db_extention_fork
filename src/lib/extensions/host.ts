@@ -1,6 +1,6 @@
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
+import { readDir, readTextFile, stat, watch, writeTextFile } from "@tauri-apps/plugin-fs";
 import { toast } from "sonner";
 import { copyText, pasteText } from "@/lib/clipboard";
 import { useConnectionsStore } from "@/lib/connections";
@@ -24,8 +24,8 @@ import { ExtensionError } from "./contracts";
 import { editorBridge } from "./editor-bridge";
 import { connectEditorTabs } from "./editor-tabs-source";
 import { ExtensionManager } from "./manager";
-import { useExtensionPrompts } from "./prompts";
 import { ProcessRuntime } from "./process-runtime";
+import { useExtensionPrompts } from "./prompts";
 import { RuntimeRouter } from "./runtime-router";
 import { SandboxRuntime } from "./sandbox-runtime";
 import { TauriExtensionStorage } from "./tauri-storage";
@@ -134,6 +134,50 @@ export function createExtensionHost() {
       const path = await open({ multiple: false, title });
       return typeof path === "string" ? path : null;
     },
+    async showOpenDirectoryDialog(title) {
+      const path = await open({ directory: true, multiple: false, title });
+      return typeof path === "string" ? path : null;
+    },
+    async listDirectory(path, includeHidden) {
+      try {
+        const entries = await readDir(path);
+        const listing = [];
+        for (const entry of entries) {
+          const hidden = entry.name.startsWith(".");
+          if (hidden && !includeHidden) continue;
+          const child = `${path.replace(/[\\/]+$/, "")}/${entry.name}`;
+          let size: number | null = null;
+          let modifiedAt: number | null = null;
+          if (!entry.isDirectory) {
+            try {
+              const info = await stat(child);
+              size = info.size;
+              modifiedAt = info.mtime ? info.mtime.getTime() : null;
+            } catch {
+              // entry that vanished between listing -> stat reported without detail
+            }
+          }
+          listing.push({
+            name: entry.name,
+            path: child,
+            directory: entry.isDirectory,
+            hidden,
+            size,
+            modifiedAt,
+          });
+        }
+        return { path, entries: listing };
+      } catch (error) {
+        throw new ExtensionError("FilesystemError", String(error));
+      }
+    },
+    async watchPath(path, onChange) {
+      try {
+        return await watch(path, (event) => onChange(event.paths), { recursive: true });
+      } catch (error) {
+        throw new ExtensionError("FilesystemError", String(error));
+      }
+    },
     async showSaveDialog(filename) {
       const path = await save({ defaultPath: filename ?? undefined });
       return typeof path === "string" ? path : null;
@@ -202,9 +246,15 @@ export function createExtensionHost() {
       const connections = useConnectionsStore.subscribe(update);
       const selections = useDbSelectionStore.subscribe(update);
       const editorTabs = connectEditorTabs();
-      const editorActive = editorBridge.onActiveChanged((event) => manager.events.emit("editorActiveChanged", event));
-      const editorContent = editorBridge.onContentChanged((event) => manager.events.emit("editorContentChanged", event));
-      const editorSelection = editorBridge.onSelectionChanged((event) => manager.events.emit("editorSelectionChanged", event));
+      const editorActive = editorBridge.onActiveChanged((event) =>
+        manager.events.emit("editorActiveChanged", event),
+      );
+      const editorContent = editorBridge.onContentChanged((event) =>
+        manager.events.emit("editorContentChanged", event),
+      );
+      const editorSelection = editorBridge.onSelectionChanged((event) =>
+        manager.events.emit("editorSelectionChanged", event),
+      );
       dispose = () => {
         connections();
         selections();

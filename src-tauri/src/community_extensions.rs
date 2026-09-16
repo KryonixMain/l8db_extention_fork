@@ -8,6 +8,21 @@ use std::{
 use tauri::Manager;
 
 const MAX_PACKAGE: u64 = 8 * 1024 * 1024;
+
+pub(crate) const GRANTABLE_PERMISSIONS: [&str; 12] = [
+    "database:read",
+    "database:write",
+    "network",
+    "filesystem:extension-storage",
+    "filesystem",
+    "clipboard:read",
+    "clipboard:write",
+    "process:execute",
+    "runtime:native",
+    "editor:read",
+    "editor:write",
+    "media:capture",
+];
 #[derive(Default)]
 pub struct ExtensionStoreLock(pub Mutex<()>);
 
@@ -293,7 +308,7 @@ fn operate(root: &Path, operation: &str, id: &str, value: Value) -> Result<Value
             installed.grants =
                 serde_json::from_value(value["grants"].clone()).map_err(|e| e.to_string())?;
             if installed.grants.iter().any(|p| {
-                !["database:read", "filesystem:extension-storage"].contains(&p.as_str())
+                !GRANTABLE_PERMISSIONS.contains(&p.as_str())
                     || !installed.archive["manifest"]["permissions"]
                         .as_array()
                         .is_some_and(|permissions| permissions.contains(&json!(p)))

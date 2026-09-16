@@ -111,6 +111,72 @@ pub struct PeerCursor {
     pub active: u64,
 }
 
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub video: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audio: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frame_rate: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bitrate: Option<u32>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaTrackInfo {
+    pub track_id: String,
+    pub source: String,
+    pub video: bool,
+    pub audio: bool,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub muted: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaFrame {
+    pub track_id: String,
+    pub kind: String,
+    pub keyframe: bool,
+    pub timestamp: i64,
+    pub duration: Option<i64>,
+    #[serde(skip)]
+    pub data: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DirectoryEntry {
+    pub name: String,
+    pub path: String,
+    pub directory: bool,
+    pub hidden: bool,
+    pub size: Option<u64>,
+    pub modified_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DirectoryListing {
+    pub path: String,
+    pub entries: Vec<DirectoryEntry>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceChange {
+    pub root: String,
+    pub paths: Vec<String>,
+}
+
 pub(crate) struct Client {
     sequence: AtomicU64,
     pending: Mutex<HashMap<u64, oneshot::Sender<Result<Value>>>>,
@@ -319,6 +385,44 @@ impl Api {
     }
     pub async fn set_peer_cursors(&self, document_id: &str, cursors: Vec<PeerCursor>) -> Result<()> {
         self.unit("editor.setPeerCursors", vec![json!(document_id), json!(cursors)]).await
+    }
+
+    pub async fn start_capture(&self, request: MediaRequest) -> Result<MediaTrackInfo> {
+        self.typed("media.start", vec![json!(request)]).await
+    }
+    pub async fn start_screen_share(&self, request: MediaRequest) -> Result<MediaTrackInfo> {
+        self.typed("media.startScreenShare", vec![json!(request)]).await
+    }
+    pub async fn stop_capture(&self, track_id: &str) -> Result<()> {
+        self.unit("media.stop", vec![json!(track_id)]).await
+    }
+    pub async fn list_capture(&self) -> Result<Vec<MediaTrackInfo>> {
+        self.typed("media.list", vec![]).await
+    }
+    pub async fn set_capture_muted(&self, track_id: &str, muted: bool) -> Result<()> {
+        self.unit("media.setMuted", vec![json!(track_id), json!(muted)]).await
+    }
+
+    pub async fn open_directory_dialog(&self, title: Option<&str>) -> Result<Option<String>> {
+        self.typed("workspace.showOpenDirectoryDialog", vec![json!(title)]).await
+    }
+    pub async fn list_directory(&self, path: &str, include_hidden: bool) -> Result<DirectoryListing> {
+        self.typed("workspace.listDirectory", vec![json!(path), json!({ "includeHidden": include_hidden })]).await
+    }
+    pub async fn granted_roots(&self) -> Result<Vec<String>> {
+        self.typed("workspace.grantedRoots", vec![]).await
+    }
+    pub async fn watch_directory(&self, path: &str) -> Result<()> {
+        self.unit("workspace.watch", vec![json!(path)]).await
+    }
+    pub async fn unwatch_directory(&self, path: &str) -> Result<()> {
+        self.unit("workspace.unwatch", vec![json!(path)]).await
+    }
+    pub async fn read_text_file(&self, path: &str) -> Result<String> {
+        self.typed("workspace.readFile", vec![json!(path)]).await
+    }
+    pub async fn write_text_file(&self, path: &str, contents: &str) -> Result<()> {
+        self.unit("workspace.writeFile", vec![json!(path), json!(contents)]).await
     }
 
     pub async fn read_asset(&self, path: &str) -> Result<String> {

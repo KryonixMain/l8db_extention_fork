@@ -105,9 +105,12 @@
         }
         return;
       }
+      const payload = message.binary
+        ? { ...message.payload, data: message.binary }
+        : message.payload;
       for (const listener of listeners.get(message.name) ?? []) {
         try {
-          Promise.resolve(listener(message.payload)).catch((error) => log("error", error));
+          Promise.resolve(listener(payload)).catch((error) => log("error", error));
         } catch (error) {
           log("error", error);
         }
@@ -188,8 +191,15 @@
           workspace: {
             showOpenDialog: (title) => rpc("workspace.showOpenDialog", title ?? null),
             showSaveDialog: (filename) => rpc("workspace.showSaveDialog", filename ?? null),
+            showOpenDirectoryDialog: (title) =>
+              rpc("workspace.showOpenDirectoryDialog", title ?? null),
             readTextFile: (path) => rpc("workspace.readFile", path),
             writeTextFile: (path, contents) => rpc("workspace.writeFile", path, contents),
+            listDirectory: (path, options) => rpc("workspace.listDirectory", path, options ?? null),
+            grantedRoots: () => rpc("workspace.grantedRoots"),
+            watch: (path) => rpc("workspace.watch", path),
+            unwatch: (path) => rpc("workspace.unwatch", path),
+            onDidChange: (listener) => subscribe("workspaceChanged", listener),
           },
           process: { run: (command, options) => rpc("process.run", command, options ?? null) },
           window: {
@@ -231,6 +241,15 @@
             onDidChangeActive: (listener) => subscribe("editorActiveChanged", listener),
             onDidChangeContent: (listener) => subscribe("editorContentChanged", listener),
             onDidChangeSelection: (listener) => subscribe("editorSelectionChanged", listener),
+          },
+          media: {
+            start: (request) => rpc("media.start", request ?? null),
+            startScreenShare: (request) => rpc("media.startScreenShare", request ?? null),
+            stop: (trackId) => rpc("media.stop", trackId),
+            list: () => rpc("media.list"),
+            setMuted: (trackId, muted) => rpc("media.setMuted", trackId, muted),
+            onFrame: (listener) => subscribe("mediaFrame", listener),
+            onTrackEnded: (listener) => subscribe("mediaTrackEnded", listener),
           },
           assets: { readText: (path) => rpc("assets.readText", path) },
           storage: {

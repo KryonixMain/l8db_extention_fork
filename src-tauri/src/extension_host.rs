@@ -20,7 +20,7 @@ pub struct NativeHostState(Mutex<HashMap<String, Host>>);
 
 struct Host {
     session: u64,
-    outbox: mpsc::Sender<String>,
+    outbox: mpsc::Sender<Vec<u8>>,
 }
 
 #[derive(Serialize, Clone)]
@@ -33,12 +33,12 @@ struct HostEvent {
 fn safe_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 160
-        && id.bytes.all(|c| c.is_ascii_alphanumeric() || b".-_".contains(&c))
+        && id.bytes().all(|c| c.is_ascii_alphanumeric() || b".-_".contains(&c))
         && !id.contains("..")
 }
 
-fn channel(id: &str) -> String {
-    format!("extension-host://{id}")
+pub(crate) fn channel(id: &str) -> String {
+    format!("extension-host://{}", id.replace('.', "_"))
 }
 
 fn base_directory(
@@ -51,6 +51,32 @@ fn base_directory(
         None => tauri::Manager::path(app).app_data_dir().map_err(|e| e.to_string())?.join("community-extensions").join(id),
     };
     base.canonicalize().map_err(|e| e.to_string())
+}
+
+fn decode_base64(input: &str) -> Result<Vec<u8>, String> {
+    let mut out = Vec::with_capacity(input.len() / 4 * 3);
+    let mut buffer: u32 = 0;
+    let mut bits: u32 = 0;
+    for byte in input.bytes() {
+        if byte == b'=' || byte == b'\n' || byte == b'\r' {
+            continue;
+        }
+        let value = match byte {
+            b'A'..=b'Z' => byte - b'A',
+            b'a'..=b'z' => byte - b'a' + 26,
+            b'0'..=b'9' => byte - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => return Err("Invalid base64 payload".into()),
+        } as u32;
+        buffer = (buffer << 6) | value;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buffer >> bits) as u8);
+        }
+    }
+    Ok(out)
 }
 
 pub(crate) fn current_platform() -> String {
@@ -181,7 +207,7 @@ pub async fn extension_host_spawn(
     let mut stdin = child.stdin.take().ok_or("Extension stdin unavailable")?;
     let stdout = child.stdout.take().ok_or("Extension stdout unavailable")?;
     let stderr = child.stderr.take().ok_or("Extension stderr unavailable")?;
-    let (outbox, mut inbox) = mpsc::channel::<String>(OUTBOX_CAPACITY);
+    let (outbox, mut inbox) = mpsc::channel::<Vec<u8>>(OUTBOX_CAPACITY);
     state.0.lock().map_err(|e| e.to_string())?.insert(id.clone(), Host { session, outbox });
 
     let reader_app = app.clone();
@@ -239,11 +265,8 @@ pub async fn extension_host_spawn(
         loop {
             tokio::select! {
                 outgoing = inbox.recv() => {
-                    let Some(line) = outgoing else { break };
-                    if stdin.write_all(line.as_bytes()).await.is_err()
-                        || stdin.write_all(b"\n").await.is_err()
-                        || stdin.flush().await.is_err()
-                    {
+                    let Some(payload) = outgoing else { break };
+                    if stdin.write_all(&payload).await.is_err() || stdin.flush().await.is_err() {
                         break;
                     }
                 }
@@ -270,6 +293,7 @@ pub async fn extension_host_send(
     state: State<'_, NativeHostState>,
     id: String,
     message: String,
+    data: Option<String>,
 ) -> Result<(), String> {
     if message.len() > MAX_LINE {
         return Err("Extension message exceeds the line limit".into());
@@ -277,11 +301,20 @@ pub async fn extension_host_send(
     if message.contains('\n') {
         return Err("Extension message must be a single line".into());
     }
+    let mut payload = message.into_bytes();
+    payload.push(b'\n');
+    if let Some(encoded) = data {
+        let bytes = decode_base64(&encoded)?;
+        if bytes.len() > MAX_LINE {
+            return Err("Extension binary attachment exceeds the limit".into());
+        }
+        payload.extend_from_slice(&bytes);
+    }
     let outbox = {
         let hosts = state.0.lock().map_err(|e| e.to_string())?;
         hosts.get(&id).ok_or("Extension host is not running")?.outbox.clone()
     };
-    outbox.send(message).await.map_err(|_| "Extension host is not running".to_string())
+    outbox.send(payload).await.map_err(|_| "Extension host is not running".to_string())
 }
 
 #[tauri::command(async)]
@@ -298,12 +331,33 @@ pub async fn extension_host_session(
     state: State<'_, NativeHostState>,
     id: String,
 ) -> Result<Option<u64>, String> {
-    Ok(state.0.lock.map_err(|e| e.to_string())?.get(&id).map(|host| host.session))
+    Ok(state.0.lock().map_err(|e| e.to_string())?.get(&id).map(|host| host.session))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn channel_names_stay_within_the_tauri_character_set() {
+        let name = channel("l8db.hello-rust");
+        assert_eq!(name, "extension-host://l8db_hello-rust");
+        assert!(name.bytes().all(|c| c.is_ascii_alphanumeric()
+            || c == b'-'
+            || c == b'/'
+            || c == b':'
+            || c == b'_'));
+        assert_ne!(channel("a.b"), channel("a.c"));
+    }
+
+    #[test]
+    fn decodes_base64_payloads() {
+        assert_eq!(decode_base64("").unwrap(), Vec::<u8>::new());
+        assert_eq!(decode_base64("AQID").unwrap(), vec![1, 2, 3]);
+        assert_eq!(decode_base64("AAH6/w==").unwrap(), vec![0, 1, 250, 255]);
+        assert_eq!(decode_base64("aGk=").unwrap(), b"hi".to_vec());
+        assert!(decode_base64("!!!").is_err());
+    }
 
     #[test]
     fn rejects_unsafe_ids() {

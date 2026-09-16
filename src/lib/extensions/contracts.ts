@@ -1,5 +1,6 @@
 import type {
   DatabaseInfo,
+  DirectoryListing,
   ExtensionArchive,
   ExtensionManifest,
   ExtensionState,
@@ -17,6 +18,8 @@ import type {
 
 export type {
   DatabaseInfo,
+  DirectoryEntry,
+  DirectoryListing,
   Disposable,
   ExtensionArchive,
   ExtensionManifest,
@@ -25,6 +28,13 @@ export type {
   FetchResponse,
   InputBoxOptions,
   Json,
+  ListDirectoryOptions,
+  MediaCapabilities,
+  MediaFrame,
+  MediaFrameMeta,
+  MediaRequest,
+  MediaSource,
+  MediaTrackInfo,
   MenuContribution,
   PanelContribution,
   PanelSnapshot,
@@ -44,6 +54,7 @@ export type {
   ViewContribution,
   ViewLocation,
   ViewSnapshot,
+  WorkspaceChange,
 } from "../../../packages/extension-api/src";
 export { ExtensionError } from "../../../packages/extension-api/src/manifest";
 export interface InstalledExtension {
@@ -87,6 +98,9 @@ export interface CoreServices {
   clipboardRead(): Promise<string>;
   clipboardWrite(value: string): Promise<void>;
   showOpenDialog(title?: string): Promise<string | null>;
+  showOpenDirectoryDialog(title?: string): Promise<string | null>;
+  listDirectory(path: string, includeHidden: boolean): Promise<DirectoryListing>;
+  watchPath(path: string, onChange: (paths: string[]) => void): Promise<() => void>;
   showSaveDialog(filename?: string): Promise<string | null>;
   readTextFile(path: string): Promise<string>;
   writeTextFile(path: string, contents: string): Promise<void>;
@@ -104,7 +118,7 @@ export interface ExtensionRuntime {
   deactivate(extensionId: string): Promise<void>;
   unload(extensionId: string): Promise<void>;
   execute(extensionId: string, command: string, payload?: Json): Promise<Json | void>;
-  event(extensionId: string, name: string, payload: Json): void;
+  event(extensionId: string, name: string, payload: Json, binary?: Uint8Array): void;
 }
 export interface RuntimeFactory {
   create(): ExtensionRuntime;

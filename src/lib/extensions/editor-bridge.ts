@@ -91,15 +91,15 @@ export class EditorBridge {
     const info =
       documentId === null
         ? null
-        : (this.surface
-            ?.listDocuments()
-            .find((document) => document.documentId === documentId) ?? null);
+        : (this.surface?.listDocuments().find((document) => document.documentId === documentId) ??
+          null);
     this.reportActive(info);
   }
 
   private view(documentId: string): EditorView {
     const view = this.views.get(documentId);
-    if (!view) throw new ExtensionError("EditorUnavailableError", `Document ${documentId} is not visible`);
+    if (!view)
+      throw new ExtensionError("EditorUnavailableError", `Document ${documentId} is not visible`);
     return view;
   }
 
@@ -205,7 +205,7 @@ export class EditorBridge {
     const event: EditorSelection = { documentId, anchor, active };
     for (const listener of [...this.selectionListeners]) listener(event);
   }
-  
+
   reportActive(document: EditorDocumentInfo | null) {
     const documentId = document?.documentId ?? null;
     if (documentId === this.lastActive) return;

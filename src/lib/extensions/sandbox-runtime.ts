@@ -96,8 +96,10 @@ export class SandboxRuntime implements ExtensionRuntime {
     document.body.append(frame);
     try {
       await loaded;
+      const main = extension.archive.manifest.main;
+      if (main === undefined) throw new Error(`${id} has no JavaScript entry point; it needs the native runtime`);
       await this.request(id, "load", {
-        code: extension.archive.files[extension.archive.manifest.main],
+        code: extension.archive.files[main],
         context: {
           extensionId: id,
           extensionPath: `extension://${id}/`,
@@ -143,8 +145,18 @@ export class SandboxRuntime implements ExtensionRuntime {
   execute(id: string, command: string, payload?: Json) {
     return this.request(id, "execute", { command, payload });
   }
-  event(id: string, name: string, payload: Json) {
-    this.sandboxes.get(id)?.port.postMessage({ type: "event", name, payload });
+  event(id: string, name: string, payload: Json, binary?: Uint8Array) {
+    const port = this.sandboxes.get(id)?.port;
+    if (!port) return;
+    if (!binary) {
+      port.postMessage({ type: "event", name, payload });
+      return;
+    }
+    const buffer = binary.buffer.slice(
+      binary.byteOffset,
+      binary.byteOffset + binary.byteLength,
+    ) as ArrayBuffer;
+    port.postMessage({ type: "event", name, payload, binary: buffer }, [buffer]);
   }
   async unload(id: string) {
     const sandbox = this.sandboxes.get(id);

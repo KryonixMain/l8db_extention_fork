@@ -1,6 +1,6 @@
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 export interface Disposable { dispose(): void }
-export type Permission = "database:read" | "database:write" | "network" | "filesystem:extension-storage" | "filesystem" | "clipboard:read" | "clipboard:write" | "process:execute" | "runtime:native" | "editor:read" | "editor:write";
+export type Permission = "database:read" | "database:write" | "network" | "filesystem:extension-storage" | "filesystem" | "clipboard:read" | "clipboard:write" | "process:execute" | "runtime:native" | "editor:read" | "editor:write" | "media:capture";
 export interface ConfigurationProperty {
   type: "boolean" | "string" | "number";
   default: boolean | string | number;
@@ -36,9 +36,15 @@ export interface NetworkCapabilities {
 export interface ProcessCapabilities {
   commands: string[];
 }
+export interface MediaCapabilities {
+  camera?: boolean;
+  microphone?: boolean;
+  screen?: boolean;
+}
 export interface ExtensionCapabilities {
   network?: NetworkCapabilities;
   process?: ProcessCapabilities;
+  media?: MediaCapabilities;
 }
 export type ExtensionPlatform = "windows-x86_64" | "windows-aarch64" | "macos-x86_64" | "macos-aarch64" | "linux-x86_64" | "linux-aarch64";
 export type ExtensionRuntimeKind = "javascript" | "native";
@@ -109,6 +115,53 @@ export interface PeerCursor {
   anchor: number;
   active: number;
 }
+export type MediaSource = "camera" | "screen";
+export interface MediaRequest {
+  video?: boolean;
+  audio?: boolean;
+  width?: number;
+  height?: number;
+  frameRate?: number;
+  bitrate?: number;
+}
+export interface MediaTrackInfo {
+  trackId: string;
+  source: MediaSource;
+  video: boolean;
+  audio: boolean;
+  width: number | null;
+  height: number | null;
+  muted: boolean;
+}
+export interface MediaFrameMeta {
+  trackId: string;
+  kind: "video" | "audio";
+  keyframe: boolean;
+  timestamp: number;
+  duration: number | null;
+}
+export interface MediaFrame extends MediaFrameMeta {
+  data: ArrayBuffer;
+}
+export interface DirectoryEntry {
+  name: string;
+  path: string;
+  directory: boolean;
+  hidden: boolean;
+  size: number | null;
+  modifiedAt: number | null;
+}
+export interface DirectoryListing {
+  path: string;
+  entries: DirectoryEntry[];
+}
+export interface ListDirectoryOptions {
+  includeHidden?: boolean;
+}
+export interface WorkspaceChange {
+  root: string;
+  paths: string[];
+}
 export interface ExtensionEvents {
   databaseOpened: DatabaseInfo;
   databaseClosed: DatabaseInfo;
@@ -117,6 +170,9 @@ export interface ExtensionEvents {
   editorActiveChanged: EditorDocumentInfo | null;
   editorContentChanged: EditorContentChange;
   editorSelectionChanged: EditorSelection;
+  mediaFrame: MediaFrame;
+  mediaTrackEnded: { trackId: string };
+  workspaceChanged: WorkspaceChange;
 }
 export interface TreeItem {
   id: string;
@@ -256,9 +312,15 @@ export interface L8dbApi {
   };
   workspace: {
     showOpenDialog(title?: string): Promise<string | null>;
+    showOpenDirectoryDialog(title?: string): Promise<string | null>;
     showSaveDialog(filename?: string): Promise<string | null>;
     readTextFile(path: string): Promise<string>;
     writeTextFile(path: string, contents: string): Promise<void>;
+    listDirectory(path: string, options?: ListDirectoryOptions): Promise<DirectoryListing>;
+    grantedRoots(): Promise<string[]>;
+    watch(path: string): Promise<void>;
+    unwatch(path: string): Promise<void>;
+    onDidChange(listener: (event: WorkspaceChange) => void | Promise<void>): Disposable;
   };
   process: {
     run(command: string, options?: ProcessOptions): Promise<ProcessResult>;
@@ -296,6 +358,15 @@ export interface L8dbApi {
     onDidChangeActive(listener: (event: EditorDocumentInfo | null) => void | Promise<void>): Disposable;
     onDidChangeContent(listener: (event: EditorContentChange) => void | Promise<void>): Disposable;
     onDidChangeSelection(listener: (event: EditorSelection) => void | Promise<void>): Disposable;
+  };
+  media: {
+    start(request?: MediaRequest): Promise<MediaTrackInfo>;
+    startScreenShare(request?: MediaRequest): Promise<MediaTrackInfo>;
+    stop(trackId: string): Promise<void>;
+    list(): Promise<MediaTrackInfo[]>;
+    setMuted(trackId: string, muted: boolean): Promise<void>;
+    onFrame(listener: (event: MediaFrame) => void | Promise<void>): Disposable;
+    onTrackEnded(listener: (event: { trackId: string }) => void | Promise<void>): Disposable;
   };
   assets: { readText(path: string): Promise<string> };
   storage: { get(key: string): Promise<Json>; set(key: string, value: Json): Promise<void> };

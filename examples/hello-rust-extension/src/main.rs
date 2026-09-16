@@ -59,6 +59,15 @@ impl Extension for HelloExtension {
         Ok(())
     }
 
+    async fn event(&mut self, name: &str, payload: Value, binary: Vec<u8>, api: &Api) {
+        if name != "mediaFrame" {
+            return;
+        }
+        let track = payload.get("trackId").and_then(Value::as_str).unwrap_or("unknown");
+        let checksum: u32 = binary.iter().map(|byte| *byte as u32).sum();
+        api.info(format!("frame {track} bytes={} checksum={checksum}", binary.len())).await;
+    }
+
     async fn deactivate(&mut self, api: &Api) -> Result<()> {
         self.listening = None;
         api.hide_status_bar("hello.listener").await
