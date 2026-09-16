@@ -7,9 +7,10 @@ export class ExtensionError extends Error {
     this.name = code;
   }
 }
-export const permissions: Permission[] = ["database:read", "database:write", "network", "filesystem:extension-storage", "filesystem", "clipboard:read", "clipboard:write", "process:execute"];
+export const permissions: Permission[] = ["database:read", "database:write", "network", "filesystem:extension-storage", "filesystem", "clipboard:read", "clipboard:write", "process:execute", "runtime:native", "editor:read", "editor:write"];
 export const extensionIdPattern = /^[a-z0-9][a-z0-9-]*\.[a-z0-9][a-z0-9-]*$/;
-export const apiVersions = ["^1.0.0", "^1.1.0"];
+export const apiVersions = ["^1.0.0", "^1.1.0", "^1.2.0"];
+export const platforms = ["windows-x86_64", "windows-aarch64", "macos-x86_64", "macos-aarch64", "linux-x86_64", "linux-aarch64"];
 const commandPattern = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
 const iconPattern = /^[a-z][a-z0-9-]{0,63}$/;
 const hostPattern = /^(\*\.)?[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*(:[0-9]{1,5})?$/;
@@ -22,13 +23,31 @@ export function safePath(path: string): boolean {
 }
 export function validateManifest(value: unknown): ExtensionManifest {
   if (!object(value)) fail("Manifest must be an object");
-  for (const key of ["id", "name", "version", "publisher", "main"]) if (!string(value[key])) fail(`Invalid ${key}`);
+  for (const key of ["id", "name", "version", "publisher"]) if (!string(value[key])) fail(`Invalid ${key}`);
   if (((value.id as string).length > 160 || !extensionIdPattern.test(value.id as string)) || !(value.id as string).startsWith(`${value.publisher}.`)) fail("ID must be publisher.name");
   if (!valid(value.version as string)) fail("Invalid semantic version");
   if (!object(value.engines) || !string(value.engines.l8db) || !validRange(value.engines.l8db)) fail("Invalid engines.l8db range");
   if (value.engines.api !== undefined && !apiVersions.includes(value.engines.api as string)) fail("Unsupported API version");
-  const main = (value.main as string).replace(/^\.\//, "");
-  if (!safePath(main) || !main.endsWith(".js")) fail("main must be a safe relative JavaScript path");
+  if (value.runtime !== undefined && value.runtime !== "javascript" && value.runtime !== "native") fail("Invalid runtime");
+  const native = value.runtime === "native";
+  if (native && value.main !== undefined) fail("Native extensions declare executables instead of main");
+  if (!native && value.executables !== undefined) fail("executables requires runtime native");
+  if (!native && !string(value.main)) fail("Invalid main");
+  const main = native ? undefined : (value.main as string).replace(/^\.\//, "");
+  if (main !== undefined && (!safePath(main) || !main.endsWith(".js"))) fail("main must be a safe relative JavaScript path");
+  let executables: Record<string, string> | undefined;
+  if (native) {
+    const declared = value.executables;
+    if (!object(declared) || !Object.keys(declared).length) fail("Native extensions must declare at least one executable");
+    if (!Object.keys(declared).every(key => platforms.includes(key))) fail("Unsupported executable platform");
+    executables = Object.fromEntries(Object.entries(declared).map(([platform, path]) => {
+      if (!string(path)) fail(`Invalid executable for ${platform}`);
+      const relative = (path as string).replace(/^\.\//, "");
+      if (!safePath(relative)) fail(`Invalid executable for ${platform}`);
+      return [platform, relative];
+    }));
+    if (!Array.isArray(value.permissions) || !value.permissions.includes("runtime:native")) fail("Native extensions must declare the runtime:native permission");
+  }
   const activationEvent = (e: unknown) => typeof e === "string" && (e === "onStartup" || e === "onDatabaseOpen" || (e.startsWith("onCommand:") && commandPattern.test(e.slice(10))) || (e.startsWith("onView:") && commandPattern.test(e.slice(7))));
   if (!Array.isArray(value.activationEvents) || value.activationEvents.length > 100 || !value.activationEvents.every(activationEvent)) fail("Invalid activationEvents");
   if (value.permissions !== undefined && (!Array.isArray(value.permissions) || !value.permissions.every(p => permissions.includes(p)))) fail("Invalid permissions");
@@ -65,7 +84,8 @@ export function validateManifest(value: unknown): ExtensionManifest {
     if (proc !== undefined && (!object(proc) || !Array.isArray(proc.commands) || proc.commands.length > 50 || !proc.commands.every(c => typeof c === "string" && binaryPattern.test(c)))) fail("Invalid process capability");
   }
   const result = structuredClone(value) as unknown as ExtensionManifest;
-  result.main = main;
+  if (main !== undefined) result.main = main;
+  if (executables !== undefined) result.executables = executables;
   if (result.engines.api === undefined) result.engines.api = "^1.0.0";
   for (const event of result.activationEvents) {
     if (event.startsWith("onCommand:") && !result.contributes?.commands?.some(c => c.id === event.slice(10))) fail("Activation command must be contributed");
@@ -98,7 +118,7 @@ export function validateArchive(value: unknown): ExtensionArchive {
   const manifest = validateManifest(value.manifest);
   const entries = Object.entries(value.files);
   if (entries.length > 256 || entries.some(([path, content]) => !safePath(path) || typeof content !== "string")) fail("Invalid archive files");
-  if (typeof value.files[manifest.main] !== "string") fail("Missing entry point");
+  if (manifest.runtime !== "native" && typeof value.files[manifest.main as string] !== "string") fail("Missing entry point");
   if (new TextEncoder().encode(JSON.stringify(value)).length > 8 * 1024 * 1024) fail("Archive exceeds 8 MiB");
   return { format: 1, manifest, files: value.files as Record<string, string> };
 }

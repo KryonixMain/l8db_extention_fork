@@ -4,6 +4,7 @@ import { type Ref, useEffect, useImperativeHandle, useRef } from "react";
 
 import type { ColumnInfo, TableInfo } from "@/lib/db";
 import { buildEditorOptions } from "@/lib/editor-options";
+import { editorBridge } from "@/lib/extensions/editor-bridge";
 import { commandById, useHotkeysStore } from "@/lib/hotkeys";
 import {
   addSqlFormatAction,
@@ -69,6 +70,7 @@ interface QueryEditorPaneProps {
   bookmarkSlots?: BookmarkSlots;
   onBookmarkSlotChange?: (slot: number, line: number | null) => void;
   onSearchTabs?: () => void;
+  documentId?: string;
   registry: SchemaRegistry;
   ref?: Ref<QueryEditorApi>;
   className?: string;
@@ -120,6 +122,7 @@ export function QueryEditorPane({
   bookmarkSlots,
   onBookmarkSlotChange,
   onSearchTabs,
+  documentId,
   registry,
   className,
   ref,
@@ -663,6 +666,82 @@ export function QueryEditorPane({
   useEffect(() => {
     monaco.editor.setTheme(themeFor(resolvedTheme));
   }, [resolvedTheme]);
+
+  useEffect(() => {
+    if (!documentId) return;
+    const editor = editorRef.current;
+    if (!editor) return;
+    const peers = editor.createDecorationsCollection([]);
+    const attached = editorBridge.attachView(documentId, {
+      getSelection: () => {
+        const model = editor.getModel();
+        const selection = editor.getSelection();
+        if (!model || !selection) return null;
+        return {
+          anchor: model.getOffsetAt(selection.getStartPosition()),
+          active: model.getOffsetAt(selection.getEndPosition()),
+        };
+      },
+      setSelection: (anchor, active) => {
+        const model = editor.getModel();
+        if (!model) return;
+        const start = model.getPositionAt(anchor);
+        const end = model.getPositionAt(active);
+        editor.setSelection(
+          new monaco.Range(start.lineNumber, start.column, end.lineNumber, end.column),
+        );
+      },
+      reveal: (offset) => {
+        const model = editor.getModel();
+        if (!model) return;
+        const position = model.getPositionAt(offset);
+        editor.revealPositionInCenterIfOutsideViewport(position);
+      },
+      setPeerCursors: (cursors) => {
+        const model = editor.getModel();
+        if (!model) return;
+        const length = model.getValueLength();
+        peers.set(
+          cursors.map((cursor) => {
+            const anchor = model.getPositionAt(Math.min(Math.max(cursor.anchor, 0), length));
+            const active = model.getPositionAt(Math.min(Math.max(cursor.active, 0), length));
+            const collapsed =
+              anchor.lineNumber === active.lineNumber && anchor.column === active.column;
+            return {
+              range: new monaco.Range(
+                anchor.lineNumber,
+                anchor.column,
+                active.lineNumber,
+                active.column,
+              ),
+              options: {
+                className: collapsed ? undefined : "l8db-peer-selection",
+                beforeContentClassName: collapsed ? "l8db-peer-caret" : undefined,
+                hoverMessage: { value: cursor.label },
+                stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
+              },
+            };
+          }),
+        );
+      },
+    });
+    const selectionSub = editor.onDidChangeCursorSelection((event) => {
+      const model = editor.getModel();
+      if (!model) return;
+      editorBridge.reportSelection(
+        documentId,
+        model.getOffsetAt(event.selection.getStartPosition()),
+        model.getOffsetAt(event.selection.getEndPosition()),
+      );
+    });
+    editorBridge.setActive(documentId);
+    return () => {
+      selectionSub.dispose();
+      attached.dispose();
+      peers.clear();
+      editorBridge.setActive(null);
+    };
+  }, [documentId]);
 
   useEffect(() => {
     const editor = editorRef.current;

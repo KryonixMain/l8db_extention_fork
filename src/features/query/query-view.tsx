@@ -1551,6 +1551,7 @@ export function QueryView({ tabId }: QueryViewProps) {
                     bookmarkSlots={bookmarkSlots}
                     onBookmarkSlotChange={(slot, line) => setQueryBookmarkSlot(tabId, slot, line)}
                     onSearchTabs={() => setTabSearchOpen(true)}
+                    documentId={tabId}
                     registry={registry}
                   />
                 </div>

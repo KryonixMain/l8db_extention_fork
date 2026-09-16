@@ -1,0 +1,24 @@
+{
+  "id": "l8db.hello-rust",
+  "name": "Hello Rust",
+  "version": "0.1.0",
+  "description": "A native extension that greets you and opens a TCP listener.",
+  "publisher": "l8db",
+  "engines": { "l8db": ">=0.5.0", "api": "^1.2.0" },
+  "runtime": "native",
+  "executables": {
+    "windows-x86_64": "bin/hello-rust-extension.exe",
+    "macos-x86_64": "bin/hello-rust-extension",
+    "macos-aarch64": "bin/hello-rust-extension",
+    "linux-x86_64": "bin/hello-rust-extension"
+  },
+  "activationEvents": ["onStartup"],
+  "permissions": ["runtime:native"],
+  "contributes": {
+    "commands": [
+      { "id": "hello.greet", "title": "Hello Rust: Greet" },
+      { "id": "hello.listen", "title": "Hello Rust: Start a TCP echo listener" }
+    ],
+    "statusBar": [{ "id": "hello.listener", "alignment": "left" }]
+  }
+}

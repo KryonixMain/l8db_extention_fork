@@ -26,6 +26,7 @@ import type {
   ViewSnapshot,
 } from "./contracts";
 import { ExtensionError } from "./contracts";
+import { editorBridge } from "./editor-bridge";
 import { ExtensionLoader } from "./loader";
 import {
   CommandRegistry,
@@ -502,14 +503,16 @@ export class ExtensionManager {
       return this.commands.execute(command, args[1]);
     }
     if (method === "events.on") {
-      this.permissions.require(extension, "database:read");
       const event = text(0, 64);
-      if (
-        event !== "databaseOpened" &&
-        event !== "databaseClosed" &&
-        event !== "activeDatabaseChanged"
-      )
-        throw new ExtensionError("ProtocolError", "Unknown event");
+      const databaseEvents = ["databaseOpened", "databaseClosed", "activeDatabaseChanged"];
+      const editorEvents = [
+        "editorActiveChanged",
+        "editorContentChanged",
+        "editorSelectionChanged",
+      ];
+      if (databaseEvents.includes(event)) this.permissions.require(extension, "database:read");
+      else if (editorEvents.includes(event)) this.permissions.require(extension, "editor:read");
+      else throw new ExtensionError("ProtocolError", "Unknown event");
       const key = `event:${event}`;
       if (!resources.has(key))
         resources.set(
@@ -552,6 +555,83 @@ export class ExtensionManager {
         level: level === "warn" ? "warning" : (level as "info" | "error"),
         actions,
       })) as Json;
+    }
+    if (method.startsWith("editor.")) {
+      const write = method === "editor.applyEdits" || method === "editor.setSelection";
+      this.permissions.require(extension, write ? "editor:write" : "editor:read");
+      if (method === "editor.getActive") return editorBridge.getActive() as unknown as Json;
+      if (method === "editor.listDocuments") return editorBridge.listDocuments() as unknown as Json;
+      if (method === "editor.getDocument") return editorBridge.getDocument(text(0, 256)) as unknown as Json;
+      if (method === "editor.applyEdits") {
+        const documentId = text(0, 256);
+        const raw = args[1];
+        if (!Array.isArray(raw) || raw.length > 500)
+          throw new ExtensionError("ProtocolError", "Invalid edits");
+        const edits = raw.map((entry) => {
+          if (!entry || typeof entry !== "object" || Array.isArray(entry))
+            throw new ExtensionError("ProtocolError", "Invalid edit");
+          const edit = entry as Record<string, Json>;
+          if (
+            typeof edit.start !== "number" ||
+            typeof edit.end !== "number" ||
+            typeof edit.text !== "string" ||
+            edit.text.length > 1048576
+          )
+            throw new ExtensionError("ProtocolError", "Invalid edit");
+          return { start: edit.start, end: edit.end, text: edit.text };
+        });
+        const baseVersion = args[2];
+        if (baseVersion !== undefined && baseVersion !== null && typeof baseVersion !== "number")
+          throw new ExtensionError("ProtocolError", "Invalid base version");
+        return editorBridge.applyEdits(
+          documentId,
+          edits,
+          typeof baseVersion === "number" ? baseVersion : undefined,
+        );
+      }
+      if (method === "editor.getSelection") return editorBridge.getSelection(text(0, 256)) as unknown as Json;
+      if (method === "editor.setSelection") {
+        const documentId = text(0, 256);
+        if (typeof args[1] !== "number" || typeof args[2] !== "number") throw new ExtensionError("ProtocolError", "Invalid selection");
+        editorBridge.setSelection(documentId, args[1], args[2]);
+        return;
+      }
+      if (method === "editor.reveal") {
+        const documentId = text(0, 256);
+        const offset = args[1];
+        editorBridge.reveal(documentId, typeof offset === "number" ? offset : 0);
+        return;
+      }
+      if (method === "editor.setPeerCursors") {
+        const documentId = text(0, 256);
+        const raw = args[1];
+        if (!Array.isArray(raw) || raw.length > 50) throw new ExtensionError("ProtocolError", "Invalid peer cursors");
+        const cursors = raw.map((entry) => {
+          if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new ExtensionError("ProtocolError", "Invalid peer cursor");
+          const cursor = entry as Record<string, Json>;
+          if (
+            typeof cursor.peerId !== "string" ||
+            cursor.peerId.length > 128 ||
+            typeof cursor.label !== "string" ||
+            cursor.label.length > 64 ||
+            typeof cursor.color !== "string" ||
+            !/^#[0-9a-fA-F]{6}$/.test(cursor.color) ||
+            typeof cursor.anchor !== "number" ||
+            typeof cursor.active !== "number"
+          )
+            throw new ExtensionError("ProtocolError", "Invalid peer cursor");
+          return {
+            peerId: cursor.peerId,
+            label: cursor.label,
+            color: cursor.color,
+            anchor: cursor.anchor,
+            active: cursor.active,
+          };
+        });
+        editorBridge.setPeerCursors(documentId, cursors);
+        return;
+      }
+      throw new ExtensionError("PermissionDeniedError", `API method unavailable: ${method}`);
     }
     if (method === "assets.readText") {
       const path = text(0, 240);
