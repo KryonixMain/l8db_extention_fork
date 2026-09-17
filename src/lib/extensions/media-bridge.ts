@@ -102,6 +102,12 @@ export class MediaBridge {
     return [...this.entries.values()].filter((entry) => entry.owner === owner).map((entry) => ({ ...entry.info }));
   }
 
+  requestKeyframe(owner: string, trackId: string) {
+    const entry = this.entries.get(trackId);
+    if (!entry || entry.owner !== owner) throw new ExtensionError("MediaTrackNotFoundError", trackId);
+    entry.track.requestKeyframe();
+  }
+
   setMuted(owner: string, trackId: string, muted: boolean) {
     const entry = this.entries.get(trackId);
     if (!entry || entry.owner !== owner) throw new ExtensionError("MediaTrackNotFoundError", trackId);

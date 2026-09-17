@@ -2,6 +2,7 @@ mod community_extensions;
 mod db;
 mod extension_host;
 mod extension_process;
+mod media_permissions;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -17,6 +18,13 @@ pub fn run() {
         .manage(db::pool::create_pool_state())
         .manage(db::transaction::create_transaction_state())
         .manage(db::ssh::create_ssh_state())
+        .setup(|app| {
+            use tauri::Manager;
+            if let Some(window) = app.get_webview_window("main") {
+                media_permissions::allow_capture(&window);
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             community_extensions::community_extension_store,
             community_extensions::read_community_extension,

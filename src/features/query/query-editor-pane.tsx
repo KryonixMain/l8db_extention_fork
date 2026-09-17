@@ -5,6 +5,7 @@ import { type Ref, useEffect, useImperativeHandle, useRef } from "react";
 import type { ColumnInfo, TableInfo } from "@/lib/db";
 import { buildEditorOptions } from "@/lib/editor-options";
 import { editorBridge } from "@/lib/extensions/editor-bridge";
+import { peerCursorClasses } from "@/lib/extensions/peer-cursors";
 import { commandById, useHotkeysStore } from "@/lib/hotkeys";
 import {
   addSqlFormatAction,
@@ -701,12 +702,14 @@ export function QueryEditorPane({
         const model = editor.getModel();
         if (!model) return;
         const length = model.getValueLength();
+        const classes = peerCursorClasses(cursors);
         peers.set(
           cursors.map((cursor) => {
             const anchor = model.getPositionAt(Math.min(Math.max(cursor.anchor, 0), length));
             const active = model.getPositionAt(Math.min(Math.max(cursor.active, 0), length));
             const collapsed =
               anchor.lineNumber === active.lineNumber && anchor.column === active.column;
+            const style = classes.get(cursor.peerId);
             return {
               range: new monaco.Range(
                 anchor.lineNumber,
@@ -715,8 +718,10 @@ export function QueryEditorPane({
                 active.column,
               ),
               options: {
-                className: collapsed ? undefined : "l8db-peer-selection",
-                beforeContentClassName: collapsed ? "l8db-peer-caret" : undefined,
+                className: collapsed ? undefined : (style?.selection ?? "l8db-peer-selection"),
+                beforeContentClassName: collapsed
+                  ? (style?.caret ?? "l8db-peer-caret")
+                  : undefined,
                 hoverMessage: { value: cursor.label },
                 stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
               },

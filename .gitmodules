@@ -1,0 +1,3 @@
+[submodule "extensions/code-together"]
+	path = extensions/code-together
+	url = git@github.com:KryonixMain/l8db_code_together.git

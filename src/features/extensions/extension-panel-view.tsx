@@ -5,9 +5,11 @@ import { useExtensionHost, useExtensionPanels } from "@/lib/extensions/react-con
 export function ExtensionPanelView({
   extensionId,
   panelId,
+  transparent = false,
 }: {
   extensionId: string;
   panelId: string;
+  transparent?: boolean;
 }) {
   const host = useExtensionHost();
   const frameRef = useRef<HTMLIFrameElement | null>(null);
@@ -45,7 +47,12 @@ export function ExtensionPanelView({
       title={snapshot.title}
       sandbox="allow-scripts"
       srcDoc={snapshot.html}
-      className="size-full min-h-0 flex-1 border-0 bg-background"
+      allowTransparency={transparent}
+      className={
+        transparent
+          ? "size-full min-h-0 flex-1 border-0 bg-transparent"
+          : "size-full min-h-0 flex-1 border-0 bg-background"
+      }
     />
   );
 }

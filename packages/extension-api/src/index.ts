@@ -1,6 +1,20 @@
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
-export interface Disposable { dispose(): void }
-export type Permission = "database:read" | "database:write" | "network" | "filesystem:extension-storage" | "filesystem" | "clipboard:read" | "clipboard:write" | "process:execute" | "runtime:native" | "editor:read" | "editor:write" | "media:capture";
+export interface Disposable {
+  dispose(): void;
+}
+export type Permission =
+  | "database:read"
+  | "database:write"
+  | "network"
+  | "filesystem:extension-storage"
+  | "filesystem"
+  | "clipboard:read"
+  | "clipboard:write"
+  | "process:execute"
+  | "runtime:native"
+  | "editor:read"
+  | "editor:write"
+  | "media:capture";
 export interface ConfigurationProperty {
   type: "boolean" | "string" | "number";
   default: boolean | string | number;
@@ -17,13 +31,14 @@ export interface ViewContribution {
 export interface PanelContribution {
   id: string;
   title: string;
+  surface?: "tab" | "overlay";
 }
 export interface StatusBarContribution {
   id: string;
   alignment?: "left" | "right";
   priority?: number;
 }
-export type MenuLocation = "palette" | "view/title" | "view/item" | "statusBar";
+export type MenuLocation = "palette" | "view/title" | "view/item" | "statusBar" | "toolbar";
 export interface MenuContribution {
   command: string;
   location: MenuLocation;
@@ -46,7 +61,13 @@ export interface ExtensionCapabilities {
   process?: ProcessCapabilities;
   media?: MediaCapabilities;
 }
-export type ExtensionPlatform = "windows-x86_64" | "windows-aarch64" | "macos-x86_64" | "macos-aarch64" | "linux-x86_64" | "linux-aarch64";
+export type ExtensionPlatform =
+  | "windows-x86_64"
+  | "windows-aarch64"
+  | "macos-x86_64"
+  | "macos-aarch64"
+  | "linux-x86_64"
+  | "linux-aarch64";
 export type ExtensionRuntimeKind = "javascript" | "native";
 export interface ExtensionManifest {
   id: string;
@@ -77,7 +98,11 @@ export interface ExtensionContext {
   storagePath: string;
   subscriptions: Disposable[];
 }
-export interface DatabaseInfo { connectionId: string; name: string; kind: string }
+export interface DatabaseInfo {
+  connectionId: string;
+  name: string;
+  kind: string;
+}
 export interface QueryResult {
   columns: string[];
   rows: Record<string, string | null>[];
@@ -170,6 +195,8 @@ export interface ExtensionEvents {
   editorActiveChanged: EditorDocumentInfo | null;
   editorContentChanged: EditorContentChange;
   editorSelectionChanged: EditorSelection;
+  editorDocumentClosed: { documentId: string };
+  workspaceViewChanged: { key: string; label: string; tab: unknown } | null;
   mediaFrame: MediaFrame;
   mediaTrackEnded: { trackId: string };
   workspaceChanged: WorkspaceChange;
@@ -213,6 +240,15 @@ export interface PanelSnapshot {
   html: string;
   open: boolean;
   updatedAt: number;
+  surface: "tab" | "overlay";
+  interactive: boolean;
+  bounds: PanelBounds | null;
+}
+export interface PanelBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 export type PromptKind = "quickPick" | "inputBox" | "message";
 export interface PromptRequest {
@@ -276,14 +312,19 @@ export interface ProcessResult {
 export interface L8dbApi {
   readonly version: "1.2.0";
   commands: {
-    registerCommand(id: string, handler: (payload?: Json) => Json | void | Promise<Json | void>): Disposable;
+    registerCommand(
+      id: string,
+      handler: (payload?: Json) => Json | void | Promise<Json | void>,
+    ): Disposable;
     executeCommand(id: string, payload?: Json): Promise<Json | void>;
     getCommands(): Promise<string[]>;
   };
   events: {
     onDatabaseOpened(listener: (event: DatabaseInfo) => void | Promise<void>): Disposable;
     onDatabaseClosed(listener: (event: DatabaseInfo) => void | Promise<void>): Disposable;
-    onActiveDatabaseChanged(listener: (event: DatabaseInfo | null) => void | Promise<void>): Disposable;
+    onActiveDatabaseChanged(
+      listener: (event: DatabaseInfo | null) => void | Promise<void>,
+    ): Disposable;
   };
   notifications: {
     showInfo(message: string, ...actions: string[]): Promise<string | undefined>;
@@ -326,7 +367,10 @@ export interface L8dbApi {
     run(command: string, options?: ProcessOptions): Promise<ProcessResult>;
   };
   window: {
-    showQuickPick(items: (string | QuickPickItem)[], options?: QuickPickOptions): Promise<(string | QuickPickItem)[] | undefined>;
+    showQuickPick(
+      items: (string | QuickPickItem)[],
+      options?: QuickPickOptions,
+    ): Promise<(string | QuickPickItem)[] | undefined>;
     showInputBox(options?: InputBoxOptions): Promise<string | undefined>;
     showInformationMessage(message: string, ...actions: string[]): Promise<string | undefined>;
     showWarningMessage(message: string, ...actions: string[]): Promise<string | undefined>;
@@ -344,18 +388,28 @@ export interface L8dbApi {
     open(panelId: string, html?: string): Promise<void>;
     close(panelId: string): Promise<void>;
     postMessage(panelId: string, message: Json): Promise<void>;
-    onDidReceiveMessage(panelId: string, listener: (message: Json) => void | Promise<void>): Disposable;
+    onDidReceiveMessage(
+      panelId: string,
+      listener: (message: Json) => void | Promise<void>,
+    ): Disposable;
   };
   editor: {
     getActive(): Promise<EditorDocument | null>;
     listDocuments(): Promise<EditorDocumentInfo[]>;
     getDocument(documentId: string): Promise<EditorDocument>;
+    createDocument(title: string, text: string): Promise<EditorDocumentInfo>;
     applyEdits(documentId: string, edits: EditorChange[], baseVersion?: number): Promise<number>;
     getSelection(documentId: string): Promise<EditorSelection | null>;
     setSelection(documentId: string, anchor: number, active: number): Promise<void>;
+    activate(documentId: string): Promise<boolean>;
+    setReadOnly(documentId: string, readOnly: boolean): Promise<void>;
+    closeDocument(documentId: string): Promise<boolean>;
+    setDocumentBadge(documentId: string, badge: string | null): Promise<void>;
     reveal(documentId: string, offset?: number): Promise<void>;
     setPeerCursors(documentId: string, cursors: PeerCursor[]): Promise<void>;
-    onDidChangeActive(listener: (event: EditorDocumentInfo | null) => void | Promise<void>): Disposable;
+    onDidChangeActive(
+      listener: (event: EditorDocumentInfo | null) => void | Promise<void>,
+    ): Disposable;
     onDidChangeContent(listener: (event: EditorContentChange) => void | Promise<void>): Disposable;
     onDidChangeSelection(listener: (event: EditorSelection) => void | Promise<void>): Disposable;
   };
@@ -370,15 +424,33 @@ export interface L8dbApi {
   };
   assets: { readText(path: string): Promise<string> };
   storage: { get(key: string): Promise<Json>; set(key: string, value: Json): Promise<void> };
-  logger: { info(message: string): void; warn(message: string): void; error(message: string): void };
+  logger: {
+    info(message: string): void;
+    warn(message: string): void;
+    error(message: string): void;
+  };
 }
 export interface ExtensionModule {
   activate(context: ExtensionContext, api: L8dbApi): void | Promise<void>;
   deactivate?(): void | Promise<void>;
 }
-export type ExtensionState = "discovered" | "validated" | "loaded" | "activated" | "deactivated" | "failed";
-export interface ExtensionArchive { format: 1; manifest: ExtensionManifest; files: Record<string, string> }
-export interface ExtensionPackage { id: string; version: string; manifest: ExtensionManifest }
+export type ExtensionState =
+  | "discovered"
+  | "validated"
+  | "loaded"
+  | "activated"
+  | "deactivated"
+  | "failed";
+export interface ExtensionArchive {
+  format: 1;
+  manifest: ExtensionManifest;
+  files: Record<string, string>;
+}
+export interface ExtensionPackage {
+  id: string;
+  version: string;
+  manifest: ExtensionManifest;
+}
 export interface ExtensionRegistryProvider {
   search(query: string): Promise<ExtensionPackage[]>;
   get(extensionId: string): Promise<ExtensionPackage | null>;

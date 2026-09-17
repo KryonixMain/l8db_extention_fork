@@ -28,6 +28,8 @@ import type {
 } from "./contracts";
 import { ExtensionError } from "./contracts";
 import { editorBridge } from "./editor-bridge";
+import { executionGateInstalled, holdExecution, releaseExecution } from "./execution-gate";
+import { closeWorkspaceView, currentWorkspaceView, openWorkspaceView } from "./workspace-views";
 import { FsGrants } from "./fs-grants";
 import { ExtensionLoader } from "./loader";
 import { mediaBridge } from "./media-bridge";
@@ -425,6 +427,7 @@ export class ExtensionManager {
       this.log(id, "error", String(error));
     } finally {
       this.cleanup(id);
+      releaseExecution(id);
       await this.runtime.unload(id);
       extension.state = "deactivated";
       this.changed();
@@ -511,6 +514,8 @@ export class ExtensionManager {
         "editorActiveChanged",
         "editorContentChanged",
         "editorSelectionChanged",
+        "editorDocumentClosed",
+        "workspaceViewChanged",
       ];
       if (event === "mediaFrame" || event === "mediaTrackEnded") {
         this.permissions.require(extension, "media:capture");
@@ -520,9 +525,11 @@ export class ExtensionManager {
             key,
             event === "mediaFrame"
               ? mediaBridge.onFrame(({ owner, frame, data }) => {
-                if (owner === id) this.runtime.event(id, event, frame as unknown as Json, data);})
+                  if (owner === id) this.runtime.event(id, event, frame as unknown as Json, data);
+                })
               : mediaBridge.onTrackEnded(({ owner, trackId }) => {
-                if (owner === id) this.runtime.event(id, event, { trackId });}),
+                  if (owner === id) this.runtime.event(id, event, { trackId });
+                }),
           );
         return;
       }
@@ -584,9 +591,14 @@ export class ExtensionManager {
         mediaBridge.stop(id, text(0, 256));
         return;
       }
+      if (method === "media.requestKeyframe") {
+        mediaBridge.requestKeyframe(id, text(0, 256));
+        return;
+      }
       if (method === "media.setMuted") {
         const trackId = text(0, 256);
-        if (typeof args[1] !== "boolean") throw new ExtensionError("ProtocolError", "Invalid muted flag");
+        if (typeof args[1] !== "boolean")
+          throw new ExtensionError("ProtocolError", "Invalid muted flag");
         mediaBridge.setMuted(id, trackId, args[1]);
         return;
       }
@@ -596,7 +608,8 @@ export class ExtensionManager {
           raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
         const number = (value: unknown, min: number, max: number, label: string) => {
           if (value === undefined) return undefined;
-          if (typeof value !== "number" || !Number.isFinite(value) || value < min || value > max) throw new ExtensionError("ProtocolError", `Invalid ${label}`);
+          if (typeof value !== "number" || !Number.isFinite(value) || value < min || value > max)
+            throw new ExtensionError("ProtocolError", `Invalid ${label}`);
           return value;
         };
         const checked: MediaRequest = {
@@ -616,12 +629,40 @@ export class ExtensionManager {
       }
       throw new ExtensionError("PermissionDeniedError", `API method unavailable: ${method}`);
     }
+    if (method === "workspace.currentView") {
+      this.permissions.require(extension, "editor:read");
+      return currentWorkspaceView() as unknown as Json;
+    }
+    if (method === "workspace.openView") {
+      this.permissions.require(extension, "editor:read");
+      return openWorkspaceView(args[0] as Json);
+    }
+    if (method === "workspace.closeView") {
+      this.permissions.require(extension, "editor:read");
+      return closeWorkspaceView(text(0, 512));
+    }
+    if (method === "workspace.holdExecution") {
+      this.permissions.require(extension, "database:read");
+      const why = args[0];
+      if (why !== null && typeof why !== "string")
+        throw new ExtensionError("ProtocolError", "Invalid hold reason");
+      holdExecution(id, why === null ? null : why.slice(0, 200));
+      return executionGateInstalled();
+    }
     if (method.startsWith("editor.")) {
-      const write = method === "editor.applyEdits" || method === "editor.setSelection";
+      const write =
+        method === "editor.applyEdits" ||
+        method === "editor.setSelection" ||
+        method === "editor.createDocument";
       this.permissions.require(extension, write ? "editor:write" : "editor:read");
       if (method === "editor.getActive") return editorBridge.getActive() as unknown as Json;
       if (method === "editor.listDocuments") return editorBridge.listDocuments() as unknown as Json;
-      if (method === "editor.getDocument") return editorBridge.getDocument(text(0, 256)) as unknown as Json;
+      if (method === "editor.createDocument") {
+        this.permissions.require(extension, "editor:write");
+        return editorBridge.createDocument(text(0, 256), text(1, 1048576)) as unknown as Json;
+      }
+      if (method === "editor.getDocument")
+        return editorBridge.getDocument(text(0, 256)) as unknown as Json;
       if (method === "editor.applyEdits") {
         const documentId = text(0, 256);
         const raw = args[1];
@@ -649,11 +690,27 @@ export class ExtensionManager {
           typeof baseVersion === "number" ? baseVersion : undefined,
         );
       }
-      if (method === "editor.getSelection") return editorBridge.getSelection(text(0, 256)) as unknown as Json;
+      if (method === "editor.getSelection")
+        return editorBridge.getSelection(text(0, 256)) as unknown as Json;
       if (method === "editor.setSelection") {
         const documentId = text(0, 256);
-        if (typeof args[1] !== "number" || typeof args[2] !== "number") throw new ExtensionError("ProtocolError", "Invalid selection");
+        if (typeof args[1] !== "number" || typeof args[2] !== "number")
+          throw new ExtensionError("ProtocolError", "Invalid selection");
         editorBridge.setSelection(documentId, args[1], args[2]);
+        return;
+      }
+      if (method === "editor.activate") return editorBridge.activate(text(0, 256));
+      if (method === "editor.setReadOnly")
+        return editorBridge.setReadOnly(text(0, 256), args[1] === true);
+      if (method === "editor.closeDocument") {
+        this.permissions.require(extension, "editor:write");
+        return editorBridge.close(text(0, 256));
+      }
+      if (method === "editor.setDocumentBadge") {
+        const badge = args[1];
+        if (badge !== null && typeof badge !== "string")
+          throw new ExtensionError("ProtocolError", "Invalid badge");
+        editorBridge.setBadge(text(0, 256), badge);
         return;
       }
       if (method === "editor.reveal") {
@@ -665,9 +722,11 @@ export class ExtensionManager {
       if (method === "editor.setPeerCursors") {
         const documentId = text(0, 256);
         const raw = args[1];
-        if (!Array.isArray(raw) || raw.length > 50) throw new ExtensionError("ProtocolError", "Invalid peer cursors");
+        if (!Array.isArray(raw) || raw.length > 50)
+          throw new ExtensionError("ProtocolError", "Invalid peer cursors");
         const cursors = raw.map((entry) => {
-          if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new ExtensionError("ProtocolError", "Invalid peer cursor");
+          if (!entry || typeof entry !== "object" || Array.isArray(entry))
+            throw new ExtensionError("ProtocolError", "Invalid peer cursor");
           const cursor = entry as Record<string, Json>;
           if (
             typeof cursor.peerId !== "string" ||
@@ -823,7 +882,8 @@ export class ExtensionManager {
       const path = text(0, 4096);
       this.requireFs(id, path);
       const raw = (args[1] ?? null) as unknown as { includeHidden?: boolean } | null;
-      const includeHidden = raw && typeof raw === "object" && !Array.isArray(raw) ? raw.includeHidden === true : false;
+      const includeHidden =
+        raw && typeof raw === "object" && !Array.isArray(raw) ? raw.includeHidden === true : false;
       return (await this.core.listDirectory(path, includeHidden)) as unknown as Json;
     }
     if (method === "workspace.watch" || method === "workspace.unwatch") {
@@ -838,7 +898,8 @@ export class ExtensionManager {
       }
       if (resources.has(key)) return;
       const stop = await this.core.watchPath(path, (paths) => {
-        if (this.resources.get(id)?.get(key)) this.runtime.event(id, "workspaceChanged", { root: path, paths } as unknown as Json);
+        if (this.resources.get(id)?.get(key))
+          this.runtime.event(id, "workspaceChanged", { root: path, paths } as unknown as Json);
       });
       resources.set(key, { dispose: stop });
       return;
@@ -1024,6 +1085,37 @@ export class ExtensionManager {
       const panelId = text(0, 128);
       const html = args[1] === undefined || args[1] === null ? "" : text(1, 262144);
       this.panels.open(id, panelId, html);
+      this.changed();
+      return;
+    }
+    if (method === "panels.setInteractive") {
+      const panelId = text(0, 128);
+      if (typeof args[1] !== "boolean")
+        throw new ExtensionError("ProtocolError", "Invalid interactive flag");
+      this.panels.setInteractive(id, panelId, args[1]);
+      this.changed();
+      return;
+    }
+    if (method === "panels.setBounds") {
+      const panelId = text(0, 128);
+      const given = args[1];
+      if (given === null || given === undefined) {
+        this.panels.setBounds(id, panelId, null);
+      } else {
+        const box = given as Record<string, unknown>;
+        const side = (key: string, max: number) => {
+          const value = box[key];
+          if (typeof value !== "number" || !Number.isFinite(value) || value < -max || value > max)
+            throw new ExtensionError("ProtocolError", `Invalid ${key}`);
+          return value;
+        };
+        this.panels.setBounds(id, panelId, {
+          x: side("x", 20000),
+          y: side("y", 20000),
+          width: Math.max(80, side("width", 20000)),
+          height: Math.max(60, side("height", 20000)),
+        });
+      }
       this.changed();
       return;
     }

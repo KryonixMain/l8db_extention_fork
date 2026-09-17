@@ -38,6 +38,7 @@ export type {
   MenuContribution,
   PanelContribution,
   PanelSnapshot,
+  PeerCursor,
   Permission,
   ProcessOptions,
   ProcessResult,

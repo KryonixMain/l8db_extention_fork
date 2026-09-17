@@ -3630,6 +3630,8 @@ dependencies = [
  "tokio-postgres",
  "tokio-util",
  "url",
+ "webview2-com",
+ "windows 0.61.3",
 ]
 
 [[package]]
