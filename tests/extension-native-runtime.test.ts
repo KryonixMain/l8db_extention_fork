@@ -77,8 +77,10 @@ test("archives require an entry point only for javascript extensions", () => {
 
 function surface(documents: Record<string, string>) {
   const state = new Map(Object.entries(documents));
-  const handle: EditorSurface & { state: Map<string, string> } = {
+  const activated: string[] = [];
+  const handle: EditorSurface & { state: Map<string, string>; activated: string[] } = {
     state,
+    activated,
     listDocuments: () =>
       [...state.keys()].map((documentId) => ({
         documentId,
@@ -90,6 +92,15 @@ function surface(documents: Record<string, string>) {
       state.has(id) ? { title: id, languageId: "sql", text: state.get(id)! } : null,
     replaceText: (id, text) => {
       state.set(id, text);
+    },
+    createDocument: (title, text) => {
+      state.set(title, text);
+      return { documentId: title, title, languageId: "sql", version: 1 };
+    },
+    closeDocument: (id) => state.delete(id),
+    activateDocument: (id) => {
+      activated.push(id);
+      return state.has(id);
     },
   };
   return handle;
@@ -215,4 +226,65 @@ test("reportActive only fires on a real change", () => {
   bridge.reportActive(null);
   expect(seen).toHaveLength(2);
   expect(seen[1]).toBeNull();
+});
+
+test("a jump aimed at a document whose tab has not mounted yet still lands", () => {
+  const bridge = new EditorBridge();
+  bridge.attach(surface({ tab1: "select 1" }));
+
+  bridge.reveal("tab1", 42);
+  bridge.setPeerCursors("tab1", [
+    { peerId: "g1", label: "Ada", color: "#61afef", anchor: 3, active: 5 },
+  ]);
+
+  const revealed: number[] = [];
+  const cursors: unknown[] = [];
+  bridge.attachView("tab1", {
+    getSelection: () => null,
+    setSelection: () => undefined,
+    reveal: (offset) => revealed.push(offset),
+    setPeerCursors: (next) => cursors.push(next),
+  });
+
+  expect(revealed).toEqual([42]);
+  expect(cursors).toHaveLength(1);
+
+  bridge.attachView("tab1", {
+    getSelection: () => null,
+    setSelection: () => undefined,
+    reveal: (offset) => revealed.push(offset),
+    setPeerCursors: (next) => cursors.push(next),
+  });
+  expect(revealed).toEqual([42]);
+  expect(cursors).toHaveLength(1);
+});
+
+test("activating a document asks the surface to bring its tab to the front", () => {
+  const bridge = new EditorBridge();
+  const target = surface({ tab1: "select 1" });
+  bridge.attach(target);
+
+  expect(bridge.activate("tab1")).toBe(true);
+  expect(target.activated).toEqual(["tab1"]);
+  expect(bridge.activate("gone")).toBe(false);
+});
+
+test("a lock is remembered and survives a surface that cannot apply it", () => {
+  const bridge = new EditorBridge();
+  bridge.attach(surface({ tab1: "select 1" }));
+
+  expect(bridge.setReadOnly("tab1", true)).toBe(true);
+
+  const applied: boolean[] = [];
+  bridge.attachView("tab1", {
+    getSelection: () => null,
+    setSelection: () => undefined,
+    reveal: () => undefined,
+    setPeerCursors: () => undefined,
+    setReadOnly: (readOnly) => applied.push(readOnly),
+  });
+  expect(applied).toEqual([true]);
+
+  bridge.setReadOnly("tab1", false);
+  expect(applied).toEqual([true, false]);
 });

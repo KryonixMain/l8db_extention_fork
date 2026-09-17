@@ -17,6 +17,7 @@ export interface CapturedTrack {
   setMuted(muted: boolean): void;
   onEnded(listener: () => void): void;
   start(sink: (chunk: EncodedChunk) => void): void;
+  requestKeyframe(): void;
   stop(): void;
 }
 
@@ -25,8 +26,38 @@ export interface MediaEngine {
 }
 
 const DEFAULT_BITRATE = 1_200_000;
+const SCREEN_BITRATE = 3_000_000;
 const DEFAULT_FRAME_RATE = 24;
 const KEYFRAME_INTERVAL_MS = 2000;
+const MAX_CAPTURE_WIDTH = 1280;
+const MAX_CAPTURE_HEIGHT = 720;
+const MAX_SCREEN_WIDTH = 1600;
+const MAX_SCREEN_HEIGHT = 1000;
+const MAX_ENCODE_QUEUE = 4;
+
+export function scaled(width: number, height: number, source: MediaSource = "camera") {
+  const wide = source === "screen" ? MAX_SCREEN_WIDTH : MAX_CAPTURE_WIDTH;
+  const tall = source === "screen" ? MAX_SCREEN_HEIGHT : MAX_CAPTURE_HEIGHT;
+  const factor = Math.min(1, wide / width, tall / height);
+  return {
+    width: Math.max(2, Math.round((width * factor) / 2) * 2),
+    height: Math.max(2, Math.round((height * factor) / 2) * 2),
+  };
+}
+
+function resize(frame: VideoFrame, width: number, height: number): VideoFrame | null {
+  const Canvas = (globalThis as unknown as { OffscreenCanvas?: typeof OffscreenCanvas })
+    .OffscreenCanvas;
+  if (!Canvas) return null;
+  const canvas = new Canvas(width, height);
+  const context = canvas.getContext("2d");
+  if (!context) return null;
+  context.drawImage(frame, 0, 0, width, height);
+  return new VideoFrame(canvas, {
+    timestamp: frame.timestamp,
+    duration: frame.duration ?? undefined,
+  });
+}
 
 function unsupported(what: string): never {
   throw new ExtensionError("MediaUnsupportedError", `${what} is unavailable in this webview`);
@@ -91,6 +122,7 @@ export const webCodecsEngine: MediaEngine = {
     const audioTrack = stream.getAudioTracks()[0] ?? null;
     const settings = videoTrack?.getSettings() ?? {};
     let stopped = false;
+    let wantKeyframe = false;
     const encoders: { close(): void }[] = [];
     const endedListeners: (() => void)[] = [];
     for (const track of stream.getTracks())
@@ -102,6 +134,9 @@ export const webCodecsEngine: MediaEngine = {
       audio: !!audioTrack,
       width: settings.width ?? null,
       height: settings.height ?? null,
+      requestKeyframe: () => {
+        wantKeyframe = true;
+      },
       setMuted: (muted) => {
         for (const track of stream.getTracks()) track.enabled = !muted;
       },
@@ -109,11 +144,18 @@ export const webCodecsEngine: MediaEngine = {
         endedListeners.push(listener);
       },
       start: (sink) => {
-        const VideoEncoderCtor = (globalThis as unknown as { VideoEncoder?: typeof VideoEncoder }).VideoEncoder;
-        const AudioEncoderCtor = (globalThis as unknown as { AudioEncoder?: typeof AudioEncoder }).AudioEncoder;
+        const VideoEncoderCtor = (globalThis as unknown as { VideoEncoder?: typeof VideoEncoder })
+          .VideoEncoder;
+        const AudioEncoderCtor = (globalThis as unknown as { AudioEncoder?: typeof AudioEncoder })
+          .AudioEncoder;
         if (videoTrack) {
           if (!VideoEncoderCtor) unsupported("VideoEncoder");
           let lastKeyframe = 0;
+          try {
+            videoTrack.contentHint = source === "screen" ? "text" : "motion";
+          } catch {
+            // an older webview without content hints simply encodes as before
+          }
           const encoder = new VideoEncoderCtor({
             output: (chunk) => {
               const data = new Uint8Array(chunk.byteLength);
@@ -128,21 +170,58 @@ export const webCodecsEngine: MediaEngine = {
             },
             error: () => undefined,
           });
-          encoder.configure({
-            codec: "vp8",
-            width: settings.width ?? request.width ?? 1280,
-            height: settings.height ?? request.height ?? 720,
-            bitrate: request.bitrate ?? DEFAULT_BITRATE,
-            framerate: request.frameRate ?? DEFAULT_FRAME_RATE,
-          });
+          let size = scaled(
+            settings.width ?? request.width ?? MAX_CAPTURE_WIDTH,
+            settings.height ?? request.height ?? MAX_CAPTURE_HEIGHT,
+            source,
+          );
+          const configure = () =>
+            encoder.configure({
+              codec: "vp8",
+              width: size.width,
+              height: size.height,
+              bitrate:
+                request.bitrate ?? (source === "screen" ? SCREEN_BITRATE : DEFAULT_BITRATE),
+              framerate: request.frameRate ?? DEFAULT_FRAME_RATE,
+              latencyMode: "realtime",
+            });
+          configure();
           encoders.push(encoder);
           pump(
             videoTrack,
             (frame) => {
+              if (encoder.encodeQueueSize > MAX_ENCODE_QUEUE) return;
+              const video = frame as VideoFrame;
+              const incoming = scaled(
+                video.displayWidth || size.width,
+                video.displayHeight || size.height,
+                source,
+              );
+              if (incoming.width !== size.width || incoming.height !== size.height) {
+                size = incoming;
+                try {
+                  configure();
+                } catch {
+                  return;
+                }
+                wantKeyframe = true;
+              }
+              const fitted =
+                video.displayWidth === size.width && video.displayHeight === size.height
+                  ? video
+                  : resize(video, size.width, size.height);
+              if (!fitted) return;
               const now = Date.now();
-              const keyFrame = now - lastKeyframe >= KEYFRAME_INTERVAL_MS;
-              if (keyFrame) lastKeyframe = now;
-              encoder.encode(frame as VideoFrame, { keyFrame });
+              const keyFrame = wantKeyframe || now - lastKeyframe >= KEYFRAME_INTERVAL_MS;
+              if (keyFrame) {
+                lastKeyframe = now;
+                wantKeyframe = false;
+              }
+              try {
+                encoder.encode(fitted, { keyFrame });
+              } finally {
+                if (fitted !== video) fitted.close();
+              }
             },
             () => stopped,
           );
@@ -172,7 +251,10 @@ export const webCodecsEngine: MediaEngine = {
           encoders.push(encoder);
           pump(
             audioTrack,
-            (frame) => encoder.encode(frame as AudioData),
+            (frame) => {
+              if (encoder.encodeQueueSize > MAX_ENCODE_QUEUE) return;
+              encoder.encode(frame as AudioData);
+            },
             () => stopped,
           );
         }

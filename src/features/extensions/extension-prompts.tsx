@@ -8,6 +8,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { ExtensionPanelOpener } from "@/features/extensions/extension-panel-opener";
+import { ExtensionPanelOverlay } from "@/features/extensions/extension-panel-overlay";
+import { ExtensionTabBadges } from "@/features/extensions/extension-tab-badges";
+import { ExtensionViewReporter } from "@/features/extensions/extension-view-reporter";
+import { ExtensionToolbarItems } from "@/features/extensions/extension-toolbar-items";
 import { type ActivePrompt, useExtensionPrompts } from "@/lib/extensions/prompts";
 import { cn } from "@/lib/utils";
 
@@ -16,6 +21,11 @@ export function ExtensionPrompts() {
   const resolve = useExtensionPrompts((state) => state.resolve);
   return (
     <>
+      <ExtensionPanelOpener />
+      <ExtensionPanelOverlay />
+      <ExtensionToolbarItems />
+      <ExtensionTabBadges />
+      <ExtensionViewReporter />
       {pending.map((prompt) => (
         <PromptDialog key={prompt.promptId} prompt={prompt} resolve={resolve} />
       ))}

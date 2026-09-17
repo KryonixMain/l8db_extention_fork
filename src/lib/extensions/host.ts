@@ -22,6 +22,8 @@ import type {
 } from "./contracts";
 import { ExtensionError } from "./contracts";
 import { editorBridge } from "./editor-bridge";
+import { installExecutionGate } from "./execution-gate";
+import { onWorkspaceViewChanged } from "./workspace-views";
 import { connectEditorTabs } from "./editor-tabs-source";
 import { ExtensionManager } from "./manager";
 import { ProcessRuntime } from "./process-runtime";
@@ -246,6 +248,7 @@ export function createExtensionHost() {
       const connections = useConnectionsStore.subscribe(update);
       const selections = useDbSelectionStore.subscribe(update);
       const editorTabs = connectEditorTabs();
+      const executionGate = installExecutionGate();
       const editorActive = editorBridge.onActiveChanged((event) =>
         manager.events.emit("editorActiveChanged", event),
       );
@@ -255,13 +258,22 @@ export function createExtensionHost() {
       const editorSelection = editorBridge.onSelectionChanged((event) =>
         manager.events.emit("editorSelectionChanged", event),
       );
+      const editorClosed = editorBridge.onDocumentClosed((event) =>
+        manager.events.emit("editorDocumentClosed", event),
+      );
+      const viewChanged = onWorkspaceViewChanged((view) =>
+        manager.events.emit("workspaceViewChanged", view),
+      );
       dispose = () => {
         connections();
         selections();
         editorTabs();
+        executionGate();
         editorActive.dispose();
         editorContent.dispose();
         editorSelection.dispose();
+        editorClosed.dispose();
+        viewChanged.dispose();
       };
       await manager.trigger("onStartup");
       update();

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { validateManifest } from "../packages/extension-api/src/manifest";
 import { MediaBridge } from "../src/lib/extensions/media-bridge";
+import { scaled } from "../src/lib/extensions/media-engine";
 import type { CapturedTrack, EncodedChunk, MediaEngine } from "../src/lib/extensions/media-engine";
 
 const js = {
@@ -180,4 +181,19 @@ test("an extension cannot hold unlimited tracks", async () => {
   const bridge = new MediaBridge(engine);
   for (let index = 0; index < 4; index += 1) await bridge.start("a.b", all, "camera", {});
   expect(bridge.start("a.b", all, "camera", {})).rejects.toThrow();
+});
+
+test("a screen share is capped before it reaches the encoder", () => {
+  expect(scaled(640, 480)).toEqual({ width: 640, height: 480 });
+  expect(scaled(320, 200)).toEqual({ width: 320, height: 200 });
+  expect(scaled(3840, 2160)).toEqual({ width: 1280, height: 720 });
+  expect(scaled(1440, 2560)).toEqual({ width: 406, height: 720 });
+  expect(scaled(5120, 1440)).toEqual({ width: 1280, height: 360 });
+  for (const [width, height] of [[1919, 1079], [1001, 667], [3, 1], [1, 1]]) {
+    const size = scaled(width, height);
+    expect(size.width % 2).toBe(0);
+    expect(size.height % 2).toBe(0);
+    expect(size.width).toBeGreaterThan(0);
+    expect(size.height).toBeGreaterThan(0);
+  }
 });

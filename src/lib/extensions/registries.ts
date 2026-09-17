@@ -321,7 +321,10 @@ export class StatusBarRegistry {
   }
 }
 export class PanelRegistry {
-  private panels = new Map<string, { owner: string; title: string }>();
+  private panels = new Map<
+    string,
+    { owner: string; title: string; surface: "tab" | "overlay" }
+  >();
   private states = new Map<string, PanelSnapshot>();
   readonly incoming = new EventBus<{ [key: string]: Json }>();
   readonly outgoing = new EventBus<{ [key: string]: Json }>();
@@ -331,7 +334,11 @@ export class PanelRegistry {
     for (const panel of entries)
       if (this.panels.has(panel.id)) throw new ExtensionError("DuplicatePanelError", panel.id);
     for (const panel of entries)
-      this.panels.set(panel.id, { owner: manifest.id, title: panel.title });
+      this.panels.set(panel.id, {
+        owner: manifest.id,
+        title: panel.title,
+        surface: panel.surface ?? "tab",
+      });
     return {
       dispose: () => {
         for (const panel of entries) {
@@ -356,7 +363,28 @@ export class PanelRegistry {
       html,
       open: true,
       updatedAt: Date.now(),
+      surface: panel.surface,
+      interactive: false,
+      bounds: null,
     });
+  }
+
+  setInteractive(owner: string, panelId: string, interactive: boolean) {
+    this.overlay(owner, panelId).interactive = interactive;
+  }
+
+  setBounds(owner: string, panelId: string, bounds: PanelBounds | null) {
+    this.overlay(owner, panelId).bounds = bounds;
+  }
+
+  private overlay(owner: string, panelId: string) {
+    const panel = this.panels.get(panelId);
+    if (!panel || panel.owner !== owner) throw new ExtensionError("PanelNotFoundError", panelId);
+    if (panel.surface !== "overlay")
+      throw new ExtensionError("ProtocolError", "Not an overlay panel");
+    const state = this.states.get(`${owner}:${panelId}`);
+    if (!state) throw new ExtensionError("PanelNotFoundError", panelId);
+    return state;
   }
   close(owner: string, panelId: string) {
     const key = `${owner}:${panelId}`;

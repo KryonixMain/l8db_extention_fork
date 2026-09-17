@@ -78,3 +78,9 @@ tiberius = { version = "0.12", default-features = false, features = ["tds73", "n
 
 [target.'cfg(target_os = "linux")'.dependencies]
 keyring = { version = "3", features = ["linux-native-sync-persistent", "crypto-rust"] }
+
+# Answering the webview when it asks for the camera, the microphone or the screen. Without a
+# handler WebView2 denies silently, which no extension can recover from.
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.38"
+windows = "0.61"

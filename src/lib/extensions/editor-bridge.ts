@@ -12,12 +12,16 @@ export interface EditorSurface {
   listDocuments(): EditorDocumentInfo[];
   readDocument(documentId: string): { title: string; languageId: string; text: string } | null;
   replaceText(documentId: string, text: string): void;
+  createDocument(title: string, text: string): EditorDocumentInfo;
+  closeDocument(documentId: string): boolean;
+  activateDocument(documentId: string): boolean;
 }
 
 export interface EditorView {
   getSelection(): { anchor: number; active: number } | null;
   setSelection(anchor: number, active: number): void;
   reveal(offset: number): void;
+  setReadOnly?(readOnly: boolean): void;
   setPeerCursors(cursors: PeerCursor[]): void;
 }
 
@@ -68,6 +72,12 @@ export class EditorBridge {
   private lastActive: string | null = null;
   private views = new Map<string, EditorView>();
   private active: string | null = null;
+  private pendingReveal = new Map<string, number>();
+  private pendingCursors = new Map<string, PeerCursor[]>();
+  private readOnly = new Map<string, boolean>();
+  private badges = new Map<string, string>();
+  private badgeListeners = new Set<Listener<Map<string, string>>>();
+  private closedListeners = new Set<Listener<{ documentId: string }>>();
 
   attach(surface: EditorSurface) {
     this.surface = surface;
@@ -79,14 +89,99 @@ export class EditorBridge {
   }
   attachView(documentId: string, view: EditorView) {
     this.views.set(documentId, view);
+    const cursors = this.pendingCursors.get(documentId);
+    if (cursors) {
+      this.pendingCursors.delete(documentId);
+      view.setPeerCursors(cursors);
+    }
+    const locked = this.readOnly.get(documentId);
+    if (locked !== undefined) view.setReadOnly?.(locked);
+    const offset = this.pendingReveal.get(documentId);
+    if (offset !== undefined) {
+      this.pendingReveal.delete(documentId);
+      view.reveal(offset);
+    }
     return {
       dispose: () => {
         if (this.views.get(documentId) === view) this.views.delete(documentId);
       },
     };
   }
+
+  activate(documentId: string): boolean {
+    return this.require().activateDocument(documentId);
+  }
+
+  close(documentId: string): boolean {
+    this.readOnly.delete(documentId);
+    this.badges.delete(documentId);
+    this.pendingReveal.delete(documentId);
+    this.pendingCursors.delete(documentId);
+    return this.require().closeDocument(documentId);
+  }
+
+
+  setReadOnly(documentId: string, readOnly: boolean): boolean {
+    this.readOnly.set(documentId, readOnly);
+    const view = this.views.get(documentId);
+    if (!view) return true; 
+    if (view.setReadOnly) {
+      view.setReadOnly(readOnly);
+      return true;
+    }
+    this.lockMountedEditor(documentId);
+    return true;
+  }
+
+  private lockMountedEditor(documentId: string) {
+    if (documentId !== this.active) return;
+    const locked = this.readOnly.get(documentId) ?? false;
+    void import("@/lib/monaco")
+      .then(({ monaco }) => {
+        for (const editor of monaco.editor.getEditors()) {
+          editor.updateOptions({
+            readOnly: locked,
+            readOnlyMessage: {
+              value: "Read-only in this session — ask the host for edit access.",
+            },
+          });
+        }
+      })
+      .catch(() => undefined);
+  }
+
+  setBadge(documentId: string, badge: string | null) {
+    if (badge === null) this.badges.delete(documentId);
+    else this.badges.set(documentId, badge.slice(0, 24));
+    for (const listener of this.badgeListeners) listener(new Map(this.badges));
+  }
+
+  documentBadges(): Map<string, string> {
+    return new Map(this.badges);
+  }
+
+  reportClosed(documentId: string) {
+    this.versions.delete(documentId);
+    this.shadows.delete(documentId);
+    this.badges.delete(documentId);
+    this.pendingReveal.delete(documentId);
+    this.pendingCursors.delete(documentId);
+    for (const listener of this.closedListeners) listener({ documentId });
+  }
+
+  onDocumentClosed(listener: Listener<{ documentId: string }>) {
+    this.closedListeners.add(listener);
+    return { dispose: () => this.closedListeners.delete(listener) };
+  }
+
+  onBadgesChanged(listener: Listener<Map<string, string>>) {
+    this.badgeListeners.add(listener);
+    return { dispose: () => this.badgeListeners.delete(listener) };
+  }
   setActive(documentId: string | null) {
     this.active = documentId;
+    if (documentId !== null && !this.views.get(documentId)?.setReadOnly)
+      this.lockMountedEditor(documentId);
     if (documentId === this.lastActive) return;
     const info =
       documentId === null
@@ -119,7 +214,9 @@ export class EditorBridge {
   }
 
   listDocuments(): EditorDocumentInfo[] {
-    return this.require().listDocuments().map((document) => ({ ...document, version: this.version(document.documentId) }));
+    return this.require()
+      .listDocuments()
+      .map((document) => ({ ...document, version: this.version(document.documentId) }));
   }
 
   getDocument(documentId: string): EditorDocument {
@@ -135,6 +232,12 @@ export class EditorBridge {
     };
   }
 
+  createDocument(title: string, text: string): EditorDocumentInfo {
+    const created = this.require().createDocument(title, text);
+    this.shadows.set(created.documentId, text);
+    this.versions.set(created.documentId, created.version || 1);
+    return created;
+  }
   getActive(): EditorDocument | null {
     this.require();
     return this.active ? this.getDocument(this.active) : null;
@@ -166,11 +269,21 @@ export class EditorBridge {
   }
 
   reveal(documentId: string, offset: number) {
-    this.view(documentId).reveal(offset);
+    const view = this.views.get(documentId);
+    if (!view) {
+      this.pendingReveal.set(documentId, offset);
+      return;
+    }
+    view.reveal(offset);
   }
 
   setPeerCursors(documentId: string, cursors: PeerCursor[]) {
-    this.view(documentId).setPeerCursors(cursors);
+    const view = this.views.get(documentId);
+    if (!view) {
+      this.pendingCursors.set(documentId, cursors);
+      return;
+    }
+    view.setPeerCursors(cursors);
   }
 
   onActiveChanged(listener: Listener<EditorDocumentInfo | null>) {

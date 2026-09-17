@@ -230,11 +230,18 @@
             getActive: () => rpc("editor.getActive"),
             listDocuments: () => rpc("editor.listDocuments"),
             getDocument: (documentId) => rpc("editor.getDocument", documentId),
+            createDocument: (title, text) => rpc("editor.createDocument", title, text),
             applyEdits: (documentId, edits, baseVersion) =>
               rpc("editor.applyEdits", documentId, edits, baseVersion ?? null),
             getSelection: (documentId) => rpc("editor.getSelection", documentId),
             setSelection: (documentId, anchor, active) =>
               rpc("editor.setSelection", documentId, anchor, active),
+            activate: (documentId) => rpc("editor.activate", documentId),
+            setReadOnly: (documentId, readOnly) =>
+              rpc("editor.setReadOnly", documentId, readOnly === true),
+            closeDocument: (documentId) => rpc("editor.closeDocument", documentId),
+            setDocumentBadge: (documentId, badge) =>
+              rpc("editor.setDocumentBadge", documentId, badge ?? null),
             reveal: (documentId, offset) => rpc("editor.reveal", documentId, offset ?? 0),
             setPeerCursors: (documentId, cursors) =>
               rpc("editor.setPeerCursors", documentId, cursors),

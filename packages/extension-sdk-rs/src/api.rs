@@ -345,6 +345,13 @@ impl Api {
     pub async fn close_panel(&self, panel_id: &str) -> Result<()> {
         self.unit("panels.close", vec![json!(panel_id)]).await
     }
+    pub async fn set_panel_bounds(&self, panel_id: &str, bounds: Option<Value>) -> Result<()> {
+        self.unit("panels.setBounds", vec![json!(panel_id), bounds.unwrap_or(Value::Null)],).await
+    }
+
+    pub async fn set_panel_interactive(&self, panel_id: &str, interactive: bool) -> Result<()> {
+        self.unit("panels.setInteractive", vec![json!(panel_id), json!(interactive)]).await
+    }
     pub async fn post_to_panel(&self, panel_id: &str, message: Value) -> Result<()> {
         self.unit("panels.postMessage", vec![json!(panel_id), message])
             .await
@@ -363,6 +370,9 @@ impl Api {
         self.typed("editor.getDocument", vec![json!(document_id)])
             .await
     }
+    pub async fn create_document(&self, title: &str, text: &str) -> Result<EditorDocumentInfo> {
+        self.typed("editor.createDocument", vec![json!(title), json!(text)]).await
+    }
     pub async fn apply_edits(
         &self,
         document_id: &str,
@@ -380,6 +390,40 @@ impl Api {
     pub async fn set_selection(&self, document_id: &str, anchor: u64, active: u64) -> Result<()> {
         self.unit("editor.setSelection", vec![json!(document_id), json!(anchor), json!(active)]).await
     }
+
+    pub async fn activate_document(&self, document_id: &str) -> Result<bool> {
+        Ok(self
+            .call("editor.activate", vec![json!(document_id)])
+            .await?
+            .as_bool()
+            .unwrap_or(false))
+    }
+    pub async fn close_document(&self, document_id: &str) -> Result<bool> {
+        Ok(self.call("editor.closeDocument", vec![json!(document_id)]).await?.as_bool().unwrap_or(false))
+    }
+
+    pub async fn current_view(&self) -> Result<Value> {
+        self.call("workspace.currentView", vec![]).await
+    }
+
+    pub async fn open_view(&self, view: Value) -> Result<bool> {
+        Ok(self.call("workspace.openView", vec![view]).await?.as_bool().unwrap_or(false))
+    }
+    pub async fn close_view(&self, key: &str) -> Result<bool> {
+        Ok(self.call("workspace.closeView", vec![json!(key)]).await?.as_bool().unwrap_or(false))
+    }
+
+
+    pub async fn hold_execution(&self, reason: Option<&str>) -> Result<()> {
+        self.unit("workspace.holdExecution", vec![json!(reason)]).await
+    }
+    pub async fn set_read_only(&self, document_id: &str, read_only: bool) -> Result<()> {
+        self.unit("editor.setReadOnly", vec![json!(document_id), json!(read_only)]).await
+    }
+    pub async fn set_document_badge(&self, document_id: &str, badge: Option<&str>) -> Result<()> {
+        self.unit("editor.setDocumentBadge", vec![json!(document_id), json!(badge)]).await
+    }
+
     pub async fn reveal(&self, document_id: &str, offset: u64) -> Result<()> {
         self.unit("editor.reveal", vec![json!(document_id), json!(offset)]).await
     }
@@ -395,6 +439,9 @@ impl Api {
     }
     pub async fn stop_capture(&self, track_id: &str) -> Result<()> {
         self.unit("media.stop", vec![json!(track_id)]).await
+    }
+    pub async fn request_keyframe(&self, track_id: &str) -> Result<()> {
+        self.unit("media.requestKeyframe", vec![json!(track_id)]).await
     }
     pub async fn list_capture(&self) -> Result<Vec<MediaTrackInfo>> {
         self.typed("media.list", vec![]).await

@@ -58,3 +58,7 @@ l8db-website/
 graphify-out/
 
 *.tsbuildinfo
+
+# Gehört zu der code-together extension zum testen
+.l8db-instance-*
+.l8db-smoke
