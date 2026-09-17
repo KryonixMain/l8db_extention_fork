@@ -30,6 +30,13 @@ pub fn run() {
             }
             Ok(())
         })
+        .setup(|app| {
+            use tauri::Manager;
+            if let Some(window) = app.get_webview_window("main") {
+                media_permissions::allow_capture(&window);
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             community_extensions::community_extension_store,
             community_extensions::read_community_extension,
